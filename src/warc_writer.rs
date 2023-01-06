@@ -33,7 +33,7 @@ impl<W: Write> WarcWriter<W> {
         Ok(())
     }
 
-    pub fn write_record<R: Read>(&mut self, record: WarcRecord<R>) -> Result<(), Error> {
+    pub fn write_record(&mut self, record: WarcRecord) -> Result<(), Error> {
         let (headers, body) = record.into_parts();
         self.writer.write_all(b"WARC/1.1\r\n")?; // FIXME un-hardcode in some fashion
         self.write_headers(headers)?;

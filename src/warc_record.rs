@@ -1,6 +1,7 @@
-use std::io::{empty, Read, Write};
+use crate::WarcRecordHeaderName::*;
+use crate::WarcStandardRecordHeaderName::*;
+use std::io::{empty, Read};
 use uuid::Uuid;
-use crate::WarcStandardRecordHeaderName::WARCRecordID;
 
 // https://iipc.github.io/warc-specifications/specifications/warc-format/warc-1.1/#named-fields
 pub enum WarcStandardRecordHeaderName {
@@ -30,29 +31,27 @@ pub enum WarcStandardRecordHeaderName {
 impl WarcStandardRecordHeaderName {
     pub fn value(&self) -> &'static [u8] {
         match self {
-            WarcStandardRecordHeaderName::WARCRecordID => b"WARC-Record-ID",
-            WarcStandardRecordHeaderName::ContentLength => b"Content-Length",
-            WarcStandardRecordHeaderName::WARCDate => b"WARC-Date",
-            WarcStandardRecordHeaderName::WARCType => b"WARC-Type",
-            WarcStandardRecordHeaderName::ContentType => b"Content-Type",
-            WarcStandardRecordHeaderName::WARCConcurrentTo => b"WARC-Concurrent-To",
-            WarcStandardRecordHeaderName::WARCBlockDigest => b"WARC-Block-Digest",
-            WarcStandardRecordHeaderName::WARCPayloadDigest => b"WARC-Payload-Digest",
-            WarcStandardRecordHeaderName::WARCIPAddress => b"WARC-IP-Address",
-            WarcStandardRecordHeaderName::WARCRefersTo => b"WARC-Refers-To",
-            WarcStandardRecordHeaderName::WARCRefersToTargetURI => b"WARC-Refers-To-Target-URI",
-            WarcStandardRecordHeaderName::WARCRefersToDate => b"WARC-Refers-To-Date",
-            WarcStandardRecordHeaderName::WARCTargetURI => b"WARC-Target-URI",
-            WarcStandardRecordHeaderName::WARCTruncated => b"WARC-Truncated",
-            WarcStandardRecordHeaderName::WARCWARCinfoID => b"WARC-Warcinfo-ID",
-            WarcStandardRecordHeaderName::WARCFilename => b"WARC-Filename",
-            WarcStandardRecordHeaderName::WARCProfile => b"WARC-Profile",
-            WarcStandardRecordHeaderName::WARCIDentifiedPayloadType => {
-                b"WARC-Identified-Payload-Type"
-            }
-            WarcStandardRecordHeaderName::WARCSegmentNumber => b"WARC-Segment-Number",
-            WarcStandardRecordHeaderName::WARCSegmentOriginID => b"WARC-Segment-Origin-ID",
-            WarcStandardRecordHeaderName::WARCSegmentTotalLength => b"WARC-Segment-Total-Length",
+            WARCRecordID => b"WARC-Record-ID",
+            ContentLength => b"Content-Length",
+            WARCDate => b"WARC-Date",
+            WARCType => b"WARC-Type",
+            ContentType => b"Content-Type",
+            WARCConcurrentTo => b"WARC-Concurrent-To",
+            WARCBlockDigest => b"WARC-Block-Digest",
+            WARCPayloadDigest => b"WARC-Payload-Digest",
+            WARCIPAddress => b"WARC-IP-Address",
+            WARCRefersTo => b"WARC-Refers-To",
+            WARCRefersToTargetURI => b"WARC-Refers-To-Target-URI",
+            WARCRefersToDate => b"WARC-Refers-To-Date",
+            WARCTargetURI => b"WARC-Target-URI",
+            WARCTruncated => b"WARC-Truncated",
+            WARCWARCinfoID => b"WARC-Warcinfo-ID",
+            WARCFilename => b"WARC-Filename",
+            WARCProfile => b"WARC-Profile",
+            WARCIDentifiedPayloadType => b"WARC-Identified-Payload-Type",
+            WARCSegmentNumber => b"WARC-Segment-Number",
+            WARCSegmentOriginID => b"WARC-Segment-Origin-ID",
+            WARCSegmentTotalLength => b"WARC-Segment-Total-Length",
         }
     }
 }
@@ -65,52 +64,50 @@ pub enum WarcRecordHeaderName {
 impl WarcRecordHeaderName {
     pub fn as_bytes(&self) -> &[u8] {
         match self {
-            WarcRecordHeaderName::Standard(name) => name.value(),
-            WarcRecordHeaderName::Custom(name) => name.as_slice(),
+            Standard(name) => name.value(),
+            Custom(name) => name.as_slice(),
         }
     }
 }
 
 pub struct WarcRecordHeader {
-    name: WarcRecordHeaderName,
-    value: Vec<u8>,
+    pub name: WarcRecordHeaderName,
+    pub value: Vec<u8>,
 }
 
-pub struct WarcRecord<R: Read> {
+pub struct WarcRecord {
     headers: Vec<WarcRecordHeader>,
-    body: R,
+    body: Box<dyn Read>,
 }
 
-impl<R: Read> WarcRecord<R> {
-    pub fn into_parts(self) -> (Vec<WarcRecordHeader>, R) {
+impl WarcRecord {
+    pub fn into_parts(self) -> (Vec<WarcRecordHeader>, Box<dyn Read>) {
         (self.headers, self.body)
     }
 }
 
-pub struct WarcRecordBuilder<R: Read> {
+pub struct WarcRecordBuilder {
     headers: Option<Vec<WarcRecordHeader>>,
-    body: Option<R>,
+    body: Option<Box<dyn Read>>,
 }
 
-impl<R: Read> WarcRecordBuilder<R> {
+impl WarcRecordBuilder {
     pub fn new() -> Self {
         WarcRecordBuilder {
-            headers: Some(vec![
-                WarcRecordHeader {
-                    name: WarcRecordHeaderName::Standard(WARCRecordID),
-                    value: format!("<{}>", Uuid::new_v4().urn()).into_bytes();
-                }
-            ]),
-            body: Some(empty())
+            headers: Some(vec![WarcRecordHeader {
+                name: Standard(WARCRecordID),
+                value: format!("<{}>", Uuid::new_v4().urn()).into_bytes(),
+            }]),
+            body: Some(Box::new(empty())),
         }
     }
 
-    pub fn body(mut self, body: R) -> Self {
+    pub fn body(mut self, body: Box<dyn Read>) -> Self {
         self.body = Some(body);
         self
     }
 
-    pub fn build(mut self) -> WarcRecord<R> {
+    pub fn build(mut self) -> WarcRecord {
         WarcRecord {
             headers: self.headers.take().unwrap(),
             body: self.body.take().unwrap(),
