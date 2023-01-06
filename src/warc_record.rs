@@ -1,3 +1,4 @@
+use chrono::{DateTime, SecondsFormat, Utc};
 use std::io::{empty, Read};
 use uuid::Uuid;
 
@@ -133,6 +134,32 @@ impl WarcRecordBuilder {
         self.headers.as_mut().unwrap().push(WarcRecordHeader {
             name: WarcRecordHeaderName::ContentLength,
             value: content_length.to_string().into_bytes(),
+        });
+        self
+    }
+
+    pub fn warc_date(mut self, warc_date: DateTime<Utc>) -> Self {
+        self.headers.as_mut().unwrap().push(WarcRecordHeader {
+            name: WarcRecordHeaderName::WARCDate,
+            value: warc_date
+                .to_rfc3339_opts(SecondsFormat::Micros, true)
+                .into_bytes(),
+        });
+        self
+    }
+
+    pub fn content_type(mut self, content_type: &[u8]) -> Self {
+        self.headers.as_mut().unwrap().push(WarcRecordHeader {
+            name: WarcRecordHeaderName::ContentType,
+            value: Vec::from(content_type),
+        });
+        self
+    }
+
+    pub fn warc_filename(mut self, filename: &[u8]) -> Self {
+        self.headers.as_mut().unwrap().push(WarcRecordHeader {
+            name: WarcRecordHeaderName::WARCFilename,
+            value: Vec::from(filename),
         });
         self
     }

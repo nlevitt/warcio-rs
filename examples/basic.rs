@@ -1,10 +1,11 @@
+use chrono::Utc;
 use std::fs::OpenOptions;
 use warcio::{WarcRecordBuilder, WarcRecordType, WarcWriter};
 
 fn main() {
     let f = OpenOptions::new()
-        .create_new(true)
-        .write(true)
+        .create(true) // .create_new(true)
+        .append(true) // .write(true)
         .open("basic.warc")
         .expect("opening basic.warc for writing");
     let mut warc_writer = WarcWriter::from(f);
@@ -13,6 +14,9 @@ fn main() {
     let payload = b"howdy doody!";
     let record = WarcRecordBuilder::new()
         .warc_type(WarcRecordType::Warcinfo)
+        .warc_date(Utc::now())
+        .warc_filename(b"basic.warc")
+        .content_type(b"application/warc-fields")
         .content_length(payload.len() as u64)
         .body(Box::new(&payload[..]))
         .build();
