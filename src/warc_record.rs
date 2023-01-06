@@ -1,5 +1,6 @@
 use crate::WarcRecordHeaderName::*;
 use crate::WarcStandardRecordHeaderName::*;
+use crate::WarcStandardRecordType::*;
 use std::io::{empty, Read};
 use uuid::Uuid;
 
@@ -19,10 +20,10 @@ pub enum WarcStandardRecordHeaderName {
     WARCRefersToDate,
     WARCTargetURI,
     WARCTruncated,
-    WARCWARCinfoID,
+    WARCWarcinfoID,
     WARCFilename,
     WARCProfile,
-    WARCIDentifiedPayloadType,
+    WARCIdentifiedPayloadType,
     WARCSegmentNumber,
     WARCSegmentOriginID,
     WARCSegmentTotalLength,
@@ -45,10 +46,10 @@ impl WarcStandardRecordHeaderName {
             WARCRefersToDate => b"WARC-Refers-To-Date",
             WARCTargetURI => b"WARC-Target-URI",
             WARCTruncated => b"WARC-Truncated",
-            WARCWARCinfoID => b"WARC-Warcinfo-ID",
+            WARCWarcinfoID => b"WARC-Warcinfo-ID",
             WARCFilename => b"WARC-Filename",
             WARCProfile => b"WARC-Profile",
-            WARCIDentifiedPayloadType => b"WARC-Identified-Payload-Type",
+            WARCIdentifiedPayloadType => b"WARC-Identified-Payload-Type",
             WARCSegmentNumber => b"WARC-Segment-Number",
             WARCSegmentOriginID => b"WARC-Segment-Origin-ID",
             WARCSegmentTotalLength => b"WARC-Segment-Total-Length",
@@ -75,13 +76,53 @@ pub struct WarcRecordHeader {
     pub value: Vec<u8>,
 }
 
+pub enum WarcStandardRecordType {
+    Warcinfo,
+    Response,
+    Resource,
+    Request,
+    Metadata,
+    Revisit,
+    Conversion,
+    Continuation,
+}
+
+impl WarcStandardRecordType {
+    pub fn value(&self) -> &'static [u8] {
+        match self {
+            Warcinfo => b"warcinfo",
+            Response => b"response",
+            Resource => b"resource",
+            Request => b"request",
+            Metadata => b"metadata",
+            Revisit => b"revisit",
+            Conversion => b"conversion",
+            Continuation => b"continuation",
+        }
+    }
+}
+
+pub enum WarcRecordType {
+    Standard(WarcStandardRecordType),
+    Custom(Vec<u8>),
+}
+
+impl WarcRecordType {
+    pub fn into_bytes_vec(self) -> Vec<u8> {
+        match self {
+            WarcRecordType::Standard(record_type) => Vec::from(record_type.value()),
+            WarcRecordType::Custom(record_type) => record_type,
+        }
+    }
+}
+
 pub struct WarcRecord {
     headers: Vec<WarcRecordHeader>,
     body: Box<dyn Read>,
 }
 
 impl WarcRecord {
-    pub fn into_parts(self) -> (Vec<WarcRecordHeader>, Box<dyn Read>) {
+    pub(crate) fn into_parts(self) -> (Vec<WarcRecordHeader>, Box<dyn Read>) {
         (self.headers, self.body)
     }
 }
@@ -92,6 +133,10 @@ pub struct WarcRecordBuilder {
 }
 
 impl WarcRecordBuilder {
+    // fn into_parts(self) -> (Option<Vec<WarcRecordHeader>>, Option<Box<dyn Read>>) {
+    //     return (self.headers, self.body);
+    // }
+
     pub fn new() -> Self {
         WarcRecordBuilder {
             headers: Some(vec![WarcRecordHeader {
@@ -104,6 +149,22 @@ impl WarcRecordBuilder {
 
     pub fn body(mut self, body: Box<dyn Read>) -> Self {
         self.body = Some(body);
+        self
+    }
+
+    pub fn warc_type(mut self, warc_type: WarcRecordType) -> Self {
+        self.headers.as_mut().unwrap().push(WarcRecordHeader {
+            name: Standard(WARCType),
+            value: warc_type.into_bytes_vec(),
+        });
+        self
+    }
+
+    pub fn content_length(mut self, content_length: u64) -> Self {
+        self.headers.as_mut().unwrap().push(WarcRecordHeader {
+            name: Standard(ContentLength),
+            value: content_length.to_string().into_bytes(),
+        });
         self
     }
 

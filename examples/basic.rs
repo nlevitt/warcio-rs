@@ -1,5 +1,5 @@
 use std::fs::OpenOptions;
-use warcio_rs::{WarcRecordBuilder, WarcWriter};
+use warcio::{WarcRecordBuilder, WarcRecordType, WarcStandardRecordType, WarcWriter};
 
 fn main() {
     let f = OpenOptions::new()
@@ -7,11 +7,14 @@ fn main() {
         .write(true)
         .open("basic.warc")
         .expect("opening basic.warc for writing");
+    let mut warc_writer = WarcWriter::from(f);
     println!("opened basic.warc for writing");
 
-    let mut warc_writer = WarcWriter::from(f);
+    let payload = b"howdy doody!";
     let record = WarcRecordBuilder::new()
-        .body(Box::new(&b"howdy doody!"[..]))
+        .warc_type(WarcRecordType::Standard(WarcStandardRecordType::Warcinfo))
+        .content_length(payload.len() as u64)
+        .body(Box::new(&payload[..]))
         .build();
     warc_writer
         .write_record(record)
