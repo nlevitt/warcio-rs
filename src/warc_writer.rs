@@ -1,12 +1,13 @@
 use crate::{WarcRecord, WarcRecordHeader};
 use std::io::{Error, Read, Write};
 
+const WARC_1_1: &[u8; 10] = b"WARC/1.1\r\n";
+const CRLF: &[u8; 2] = b"\r\n";
+const CRLFCRLF: &[u8; 4] = b"\r\n\r\n";
+
 pub struct WarcWriter<W: Write> {
     writer: W,
 }
-
-const CRLF: &[u8; 2] = b"\r\n";
-const CRLFCRLF: &[u8; 4] = b"\r\n\r\n";
 
 impl<W: Write> WarcWriter<W> {
     fn write_headers(&mut self, headers: Vec<WarcRecordHeader>) -> Result<(), Error> {
@@ -35,7 +36,7 @@ impl<W: Write> WarcWriter<W> {
 
     pub fn write_record(&mut self, record: WarcRecord) -> Result<(), Error> {
         let (headers, body) = record.into_parts();
-        self.writer.write_all(b"WARC/1.1\r\n")?; // FIXME un-hardcode in some fashion
+        self.writer.write_all(WARC_1_1)?;
         self.write_headers(headers)?;
         self.writer.write_all(CRLF)?;
         self.write_body(body)?;

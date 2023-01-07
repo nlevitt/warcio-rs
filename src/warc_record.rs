@@ -164,6 +164,14 @@ impl WarcRecordBuilder {
         self
     }
 
+    pub fn warc_target_uri(mut self, uri: &[u8]) -> Self {
+        self.headers.as_mut().unwrap().push(WarcRecordHeader {
+            name: WarcRecordHeaderName::WARCTargetURI,
+            value: Vec::from(uri),
+        });
+        self
+    }
+
     pub fn build(mut self) -> WarcRecord {
         WarcRecord {
             headers: self.headers.take().unwrap(),
