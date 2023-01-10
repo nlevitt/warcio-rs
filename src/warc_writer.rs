@@ -7,47 +7,22 @@ const WARC_1_1: &[u8; 10] = b"WARC/1.1\r\n";
 const CRLF: &[u8; 2] = b"\r\n";
 const CRLFCRLF: &[u8; 4] = b"\r\n\r\n";
 
-pub enum WarcWriter<W: Write> {
-    Gzip(GzipWarcWriter<W>),
-    Uncompressed(UncompressedWarcWriter<W>),
+pub struct WarcWriter<W: Write> {
+    writer: W,
+    gzip: bool,
 }
 
 impl<W: Write> WarcWriter<W> {
     pub fn new(writer: W, gzip: bool) -> Self {
-        if gzip {
-            WarcWriter::Gzip(GzipWarcWriter::from(writer))
-        } else {
-            WarcWriter::Uncompressed(UncompressedWarcWriter::from(writer))
-        }
+        Self { writer, gzip }
     }
 
     pub fn write_record(&mut self, record: WarcRecord) -> Result<(), Error> {
-        match self {
-            WarcWriter::Gzip(w) => GzipRecordWriter::new(&mut w.writer).write_record(record),
-            WarcWriter::Uncompressed(w) => {
-                UncompressedRecordWriter::new(&mut w.writer).write_record(record)
-            }
+        if self.gzip {
+            GzipRecordWriter::new(&mut self.writer).write_record(record)
+        } else {
+            UncompressedRecordWriter::new(&mut self.writer).write_record(record)
         }
-    }
-}
-
-pub struct GzipWarcWriter<W: Write> {
-    writer: W,
-}
-
-pub struct UncompressedWarcWriter<W> {
-    writer: W,
-}
-
-impl<W: Write> From<W> for GzipWarcWriter<W> {
-    fn from(writer: W) -> Self {
-        Self { writer }
-    }
-}
-
-impl<W: Write> From<W> for UncompressedWarcWriter<W> {
-    fn from(writer: W) -> Self {
-        Self { writer }
     }
 }
 
@@ -92,6 +67,7 @@ impl<W: Write> GzipRecordWriter<W> {
         Ok(())
     }
 }
+
 fn write_headers<W: Write>(w: &mut W, headers: Vec<WarcRecordHeader>) -> Result<(), Error> {
     for header in headers.into_iter() {
         w.write_all(header.name.as_bytes())?;
