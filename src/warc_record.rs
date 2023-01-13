@@ -172,6 +172,14 @@ impl WarcRecordBuilder {
         self
     }
 
+    pub fn warc_payload_digest(mut self, digest: &[u8]) -> Self {
+        self.headers.as_mut().unwrap().push(WarcRecordHeader {
+            name: WarcRecordHeaderName::WARCPayloadDigest,
+            value: Vec::from(digest),
+        });
+        self
+    }
+
     pub fn build(mut self) -> WarcRecord {
         WarcRecord {
             headers: self.headers.take().unwrap(),
