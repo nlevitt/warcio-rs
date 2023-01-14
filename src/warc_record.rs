@@ -108,7 +108,7 @@ pub struct WarcRecordBuilder {
 
 impl WarcRecordBuilder {
     pub fn new() -> Self {
-        WarcRecordBuilder {
+        Self {
             headers: Some(vec![WarcRecordHeader {
                 name: WarcRecordHeaderName::WARCRecordID,
                 value: format!("<{}>", Uuid::new_v4().urn()).into_bytes(),

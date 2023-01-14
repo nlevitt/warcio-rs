@@ -1,18 +1,19 @@
 use crate::{WarcRecord, WarcRecordHeader};
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use std::io::{Error, Read, Write};
+use std::io::{Error, Read, Seek, SeekFrom, Write};
 
 const WARC_1_1: &[u8; 10] = b"WARC/1.1\r\n";
 const CRLF: &[u8; 2] = b"\r\n";
 const CRLFCRLF: &[u8; 4] = b"\r\n\r\n";
 
-pub struct WarcWriter<W: Write> {
+// TODO Seek is only used to get current offset, but we could keep track of that by counting bytes
+pub struct WarcWriter<W: Write + Seek> {
     writer: W,
     gzip: bool,
 }
 
-impl<W: Write> WarcWriter<W> {
+impl<W: Write + Seek> WarcWriter<W> {
     pub fn new(writer: W, gzip: bool) -> Self {
         Self { writer, gzip }
     }
@@ -23,6 +24,10 @@ impl<W: Write> WarcWriter<W> {
         } else {
             UncompressedRecordWriter::new(&mut self.writer).write_record(record)
         }
+    }
+
+    pub fn tell(&mut self) -> u64 {
+        self.writer.seek(SeekFrom::Current(0)).unwrap()
     }
 }
 
