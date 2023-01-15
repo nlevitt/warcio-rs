@@ -109,7 +109,6 @@ impl WarcRecord {
             body: Some(Box::new(empty())),
         }
     }
-
 }
 
 pub struct WarcRecordBuilder {

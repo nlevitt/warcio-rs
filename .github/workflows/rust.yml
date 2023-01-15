@@ -1,22 +1,18 @@
-name: Rust
-
 on:
-  push:
-    branches: [ "master" ]
-  pull_request:
-    branches: [ "master" ]
+- push
+- pull_request
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v3
-    - name: Build
+    - name: build
       run: cargo build --verbose
-    - name: Run tests
+    - name: test
       run: cargo test --verbose
+    - name: check formatting
+      run: cargo fmt --all --check
