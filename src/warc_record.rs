@@ -99,16 +99,9 @@ impl WarcRecord {
     pub(crate) fn into_parts(self) -> (Vec<WarcRecordHeader>, Box<dyn Read>) {
         (self.headers, self.body)
     }
-}
 
-pub struct WarcRecordBuilder {
-    headers: Option<Vec<WarcRecordHeader>>,
-    body: Option<Box<dyn Read>>,
-}
-
-impl WarcRecordBuilder {
-    pub fn new() -> Self {
-        Self {
+    pub fn builder() -> WarcRecordBuilder {
+        WarcRecordBuilder {
             headers: Some(vec![WarcRecordHeader {
                 name: WarcRecordHeaderName::WARCRecordID,
                 value: format!("<{}>", Uuid::new_v4().urn()).into_bytes(),
@@ -117,6 +110,14 @@ impl WarcRecordBuilder {
         }
     }
 
+}
+
+pub struct WarcRecordBuilder {
+    headers: Option<Vec<WarcRecordHeader>>,
+    body: Option<Box<dyn Read>>,
+}
+
+impl WarcRecordBuilder {
     pub fn body(mut self, body: Box<dyn Read>) -> Self {
         self.body = Some(body);
         self
