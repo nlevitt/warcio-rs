@@ -10,17 +10,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
-    - name: Build
+    - name: build
       run: cargo build --verbose
-    - name: Run tests
+    - name: test
       run: cargo test --verbose
-
-  fmt:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - name: cargo fmt
-        uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
+    - name: check formatting
+      run: cargo fmt --all --check
