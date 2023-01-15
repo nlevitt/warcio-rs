@@ -109,7 +109,6 @@ impl WarcRecord {
             body: Some(Box::new(empty())),
         }
     }
-
 }
 
 pub struct WarcRecordBuilder {
@@ -158,7 +157,10 @@ impl WarcRecordBuilder {
     }
 
     pub fn warc_filename(mut self, filename: &[u8]) -> Self {
-        self.headers.as_mut().unwrap().push(WarcRecordHeader { name: WarcRecordHeaderName::WARCFilename, value: Vec::from(filename) });
+        self.headers.as_mut().unwrap().push(WarcRecordHeader {
+            name: WarcRecordHeaderName::WARCFilename,
+            value: Vec::from(filename),
+        });
         self
     }
 
