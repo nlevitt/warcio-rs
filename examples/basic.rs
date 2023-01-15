@@ -12,14 +12,7 @@ fn main() {
     println!("opened basic.warc for writing");
 
     let payload = b"howdy doody!";
-    let record = WarcRecord::builder()
-        .warc_type(WarcRecordType::Warcinfo)
-        .warc_date(Utc::now())
-        .warc_filename(b"basic.warc")
-        .content_type(b"application/warc-fields")
-        .content_length(payload.len() as u64)
-        .body(Box::new(&payload[..]))
-        .build();
+    let record = WarcRecord::builder().warc_type(WarcRecordType::Warcinfo).warc_date(Utc::now()).warc_filename(b"basic.warc").content_type(b"application/warc-fields").content_length(payload.len() as u64).body(Box::new(&payload[..])).build();
     warc_writer
         .write_record(record)
         .expect("warc_writer.warc_record");
