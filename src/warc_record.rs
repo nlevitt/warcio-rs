@@ -112,6 +112,8 @@ impl WarcRecord {
     }
 }
 
+/// Doesn't block duplicate headers, though the standard disallows this, except for
+/// warc-concurrent-to.
 pub struct WarcRecordBuilder {
     headers: Option<Vec<WarcRecordHeader>>,
     body: Option<Box<dyn Read>>,
@@ -123,62 +125,49 @@ impl WarcRecordBuilder {
         self
     }
 
-    pub fn warc_type(mut self, warc_type: WarcRecordType) -> Self {
+    pub fn add_header(mut self, name: WarcRecordHeaderName, value: &[u8]) -> Self {
         self.headers.as_mut().unwrap().push(WarcRecordHeader {
-            name: WarcRecordHeaderName::WARCType,
-            value: Vec::from(warc_type.as_bytes()),
+            name,
+            value: Vec::from(value),
         });
         self
     }
 
-    pub fn content_length(mut self, content_length: u64) -> Self {
-        self.headers.as_mut().unwrap().push(WarcRecordHeader {
-            name: WarcRecordHeaderName::ContentLength,
-            value: content_length.to_string().into_bytes(),
-        });
-        self
+    pub fn warc_type(self, warc_type: WarcRecordType) -> Self {
+        self.add_header(WarcRecordHeaderName::WARCType, warc_type.as_bytes())
     }
 
-    pub fn warc_date(mut self, warc_date: DateTime<Utc>) -> Self {
-        self.headers.as_mut().unwrap().push(WarcRecordHeader {
-            name: WarcRecordHeaderName::WARCDate,
-            value: warc_date
+    /// Doesn't enforce that this matches actual length of body.
+    pub fn content_length(self, content_length: u64) -> Self {
+        self.add_header(
+            WarcRecordHeaderName::ContentLength,
+            content_length.to_string().as_bytes(),
+        )
+    }
+
+    pub fn warc_date(self, warc_date: DateTime<Utc>) -> Self {
+        self.add_header(
+            WarcRecordHeaderName::WARCDate,
+            warc_date
                 .to_rfc3339_opts(SecondsFormat::Micros, true)
-                .into_bytes(),
-        });
-        self
+                .as_bytes(),
+        )
     }
 
-    pub fn content_type(mut self, content_type: &[u8]) -> Self {
-        self.headers.as_mut().unwrap().push(WarcRecordHeader {
-            name: WarcRecordHeaderName::ContentType,
-            value: Vec::from(content_type),
-        });
-        self
+    pub fn content_type(self, content_type: &[u8]) -> Self {
+        self.add_header(WarcRecordHeaderName::ContentType, content_type)
     }
 
-    pub fn warc_filename(mut self, filename: &[u8]) -> Self {
-        self.headers.as_mut().unwrap().push(WarcRecordHeader {
-            name: WarcRecordHeaderName::WARCFilename,
-            value: Vec::from(filename),
-        });
-        self
+    pub fn warc_filename(self, filename: &[u8]) -> Self {
+        self.add_header(WarcRecordHeaderName::WARCFilename, filename)
     }
 
-    pub fn warc_target_uri(mut self, uri: &[u8]) -> Self {
-        self.headers.as_mut().unwrap().push(WarcRecordHeader {
-            name: WarcRecordHeaderName::WARCTargetURI,
-            value: Vec::from(uri),
-        });
-        self
+    pub fn warc_target_uri(self, uri: &[u8]) -> Self {
+        self.add_header(WarcRecordHeaderName::WARCTargetURI, uri)
     }
 
-    pub fn warc_payload_digest(mut self, digest: &[u8]) -> Self {
-        self.headers.as_mut().unwrap().push(WarcRecordHeader {
-            name: WarcRecordHeaderName::WARCPayloadDigest,
-            value: Vec::from(digest),
-        });
-        self
+    pub fn warc_payload_digest(self, digest: &[u8]) -> Self {
+        self.add_header(WarcRecordHeaderName::WARCPayloadDigest, digest)
     }
 
     pub fn build(mut self) -> WarcRecord {
@@ -191,7 +180,8 @@ impl WarcRecordBuilder {
 
 #[cfg(test)]
 mod tests {
-    use crate::{WarcRecord, WarcRecordHeaderName};
+    use crate::{WarcRecord, WarcRecordHeaderName, WarcRecordType};
+    use chrono::{TimeZone, Utc};
     use regex::bytes::Regex;
     use std::io::Read;
     use std::str::from_utf8;
@@ -217,5 +207,69 @@ mod tests {
         let mut buf = Vec::new();
         body.read_to_end(&mut buf).unwrap();
         assert_eq!(buf, b"");
+    }
+
+    #[test]
+    fn test_all_the_headers() {
+        let record = WarcRecord::builder()
+            .warc_type(WarcRecordType::Resource)
+            .content_length(100)
+            .warc_date(Utc.with_ymd_and_hms(2023, 1, 1, 0, 0, 0).unwrap())
+            .content_type(b"text/plain; charset=utf-8")
+            .warc_filename(b"test.warc")
+            .warc_target_uri(b"https://example.com/foo.txt")
+            .warc_payload_digest(
+                b"sha256:0b0edecafc0ffeec0c0acafef00ddeadface0ffaccededd00dadeffacedd00d9",
+            )
+            .build();
+
+        let (headers, _) = record.into_parts();
+
+        assert_eq!(headers.len(), 8);
+        assert!(&headers[0].name == &WarcRecordHeaderName::WARCRecordID);
+        assert!(&headers[1].name == &WarcRecordHeaderName::WARCType);
+        assert_eq!(&headers[1].value, b"resource");
+        assert!(&headers[2].name == &WarcRecordHeaderName::ContentLength);
+        assert_eq!(&headers[2].value, b"100");
+        assert!(&headers[3].name == &WarcRecordHeaderName::WARCDate);
+        assert_eq!(&headers[3].value, b"2023-01-01T00:00:00.000000Z");
+        assert!(&headers[4].name == &WarcRecordHeaderName::ContentType);
+        assert_eq!(&headers[4].value, b"text/plain; charset=utf-8");
+        assert!(&headers[5].name == &WarcRecordHeaderName::WARCFilename);
+        assert_eq!(&headers[5].value, b"test.warc");
+        assert!(&headers[6].name == &WarcRecordHeaderName::WARCTargetURI);
+        assert_eq!(&headers[6].value, b"https://example.com/foo.txt");
+        assert!(&headers[7].name == &WarcRecordHeaderName::WARCPayloadDigest);
+        assert_eq!(
+            &headers[7].value,
+            b"sha256:0b0edecafc0ffeec0c0acafef00ddeadface0ffaccededd00dadeffacedd00d9"
+        );
+    }
+
+    #[test]
+    fn test_custom_header() {
+        let record = WarcRecord::builder()
+            .add_header(
+                WarcRecordHeaderName::Custom(b"custom-warc-header".to_vec()),
+                b"toot",
+            )
+            .build();
+        let (headers, _) = record.into_parts();
+        assert_eq!(headers.len(), 2);
+        assert!(&headers[0].name == &WarcRecordHeaderName::WARCRecordID);
+        assert!(&headers[1].name == &WarcRecordHeaderName::Custom(b"custom-warc-header".to_vec()));
+        assert!(&headers[1].value == b"toot");
+    }
+
+    #[test]
+    fn test_custom_warc_type() {
+        let record = WarcRecord::builder()
+            .warc_type(WarcRecordType::Custom(b"special".to_vec()))
+            .build();
+        let (headers, _) = record.into_parts();
+        assert_eq!(headers.len(), 2);
+        assert!(&headers[0].name == &WarcRecordHeaderName::WARCRecordID);
+        assert!(&headers[1].name == &WarcRecordHeaderName::WARCType);
+        assert_eq!(&headers[1].value, b"special");
     }
 }
