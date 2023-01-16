@@ -1,5 +1,6 @@
 use chrono::{DateTime, SecondsFormat, Utc};
 use std::io::{empty, Read};
+use uuid::fmt::Urn;
 use uuid::Uuid;
 
 // https://iipc.github.io/warc-specifications/specifications/warc-format/warc-1.1/#named-fields
@@ -94,6 +95,7 @@ impl WarcRecordType {
 pub struct WarcRecord {
     headers: Vec<WarcRecordHeader>,
     body: Box<dyn Read>,
+    pub record_id: Urn,
 }
 
 impl WarcRecord {
@@ -102,12 +104,14 @@ impl WarcRecord {
     }
 
     pub fn builder() -> WarcRecordBuilder {
+        let record_id = Uuid::new_v4().urn();
         WarcRecordBuilder {
             headers: Some(vec![WarcRecordHeader {
                 name: WarcRecordHeaderName::WARCRecordID,
-                value: format!("<{}>", Uuid::new_v4().urn()).into_bytes(),
+                value: format!("<{}>", record_id).into_bytes(),
             }]),
             body: Some(Box::new(empty())),
+            record_id,
         }
     }
 }
@@ -117,6 +121,7 @@ impl WarcRecord {
 pub struct WarcRecordBuilder {
     headers: Option<Vec<WarcRecordHeader>>,
     body: Option<Box<dyn Read>>,
+    record_id: Urn,
 }
 
 impl WarcRecordBuilder {
@@ -174,6 +179,7 @@ impl WarcRecordBuilder {
         WarcRecord {
             headers: self.headers.take().unwrap(),
             body: self.body.take().unwrap(),
+            record_id: self.record_id,
         }
     }
 }
