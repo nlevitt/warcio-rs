@@ -192,7 +192,7 @@ mod tests {
         let (headers, mut body) = record.into_parts();
 
         assert_eq!(headers.len(), 1);
-        assert!(&headers[0].name == &WarcRecordHeaderName::WARCRecordID);
+        assert_eq!(&headers[0].name.as_bytes(), b"WARC-Record-ID");
         let re = Regex::new(
             r"^<urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}>$",
         )
@@ -226,20 +226,20 @@ mod tests {
         let (headers, _) = record.into_parts();
 
         assert_eq!(headers.len(), 8);
-        assert!(&headers[0].name == &WarcRecordHeaderName::WARCRecordID);
-        assert!(&headers[1].name == &WarcRecordHeaderName::WARCType);
+        assert_eq!(&headers[0].name.as_bytes(), b"WARC-Record-ID");
+        assert_eq!(&headers[1].name.as_bytes(), b"WARC-Type");
         assert_eq!(&headers[1].value, b"resource");
-        assert!(&headers[2].name == &WarcRecordHeaderName::ContentLength);
+        assert_eq!(&headers[2].name.as_bytes(), b"Content-Length");
         assert_eq!(&headers[2].value, b"100");
-        assert!(&headers[3].name == &WarcRecordHeaderName::WARCDate);
+        assert_eq!(&headers[3].name.as_bytes(), b"WARC-Date");
         assert_eq!(&headers[3].value, b"2023-01-01T00:00:00.000000Z");
-        assert!(&headers[4].name == &WarcRecordHeaderName::ContentType);
+        assert_eq!(&headers[4].name.as_bytes(), b"Content-Type");
         assert_eq!(&headers[4].value, b"text/plain; charset=utf-8");
-        assert!(&headers[5].name == &WarcRecordHeaderName::WARCFilename);
+        assert_eq!(&headers[5].name.as_bytes(), b"WARC-Filename");
         assert_eq!(&headers[5].value, b"test.warc");
-        assert!(&headers[6].name == &WarcRecordHeaderName::WARCTargetURI);
+        assert_eq!(&headers[6].name.as_bytes(), b"WARC-Target-URI");
         assert_eq!(&headers[6].value, b"https://example.com/foo.txt");
-        assert!(&headers[7].name == &WarcRecordHeaderName::WARCPayloadDigest);
+        assert_eq!(&headers[7].name.as_bytes(), b"WARC-Payload-Digest");
         assert_eq!(
             &headers[7].value,
             b"sha256:0b0edecafc0ffeec0c0acafef00ddeadface0ffaccededd00dadeffacedd00d9"
@@ -256,9 +256,9 @@ mod tests {
             .build();
         let (headers, _) = record.into_parts();
         assert_eq!(headers.len(), 2);
-        assert!(&headers[0].name == &WarcRecordHeaderName::WARCRecordID);
-        assert!(&headers[1].name == &WarcRecordHeaderName::Custom(b"custom-warc-header".to_vec()));
-        assert!(&headers[1].value == b"toot");
+        assert_eq!(&headers[0].name.as_bytes(), b"WARC-Record-ID");
+        assert_eq!(&headers[1].name.as_bytes(), b"custom-warc-header");
+        assert_eq!(&headers[1].value, b"toot");
     }
 
     #[test]
@@ -268,8 +268,8 @@ mod tests {
             .build();
         let (headers, _) = record.into_parts();
         assert_eq!(headers.len(), 2);
-        assert!(&headers[0].name == &WarcRecordHeaderName::WARCRecordID);
-        assert!(&headers[1].name == &WarcRecordHeaderName::WARCType);
+        assert_eq!(&headers[0].name.as_bytes(), b"WARC-Record-ID");
+        assert_eq!(&headers[1].name.as_bytes(), b"WARC-Type");
         assert_eq!(&headers[1].value, b"special");
     }
 }
