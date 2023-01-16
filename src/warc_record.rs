@@ -3,6 +3,7 @@ use std::io::{empty, Read};
 use uuid::Uuid;
 
 // https://iipc.github.io/warc-specifications/specifications/warc-format/warc-1.1/#named-fields
+#[derive(PartialEq, Eq)]
 pub enum WarcRecordHeaderName {
     WARCRecordID,
     ContentLength,
@@ -185,5 +186,36 @@ impl WarcRecordBuilder {
             headers: self.headers.take().unwrap(),
             body: self.body.take().unwrap(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{WarcRecord, WarcRecordHeaderName};
+    use regex::bytes::Regex;
+    use std::io::Read;
+    use std::str::from_utf8;
+
+    #[test]
+    fn test_minimal_record() {
+        let record = WarcRecord::builder().build();
+        let (headers, mut body) = record.into_parts();
+
+        assert_eq!(headers.len(), 1);
+        assert!(&headers[0].name == &WarcRecordHeaderName::WARCRecordID);
+        let re = Regex::new(
+            r"^<urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}>$",
+        )
+        .unwrap();
+        assert!(
+            re.is_match(&headers[0].value),
+            "warc-record-id {} does not match regex {}",
+            from_utf8(&headers[0].value).unwrap(),
+            re
+        );
+
+        let mut buf = Vec::new();
+        body.read_to_end(&mut buf).unwrap();
+        assert_eq!(buf, b"");
     }
 }
