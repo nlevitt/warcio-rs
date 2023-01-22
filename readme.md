@@ -1,4 +1,4 @@
-[![tests](https://github.com/nlevitt/warcio-rs/actions/workflows/rust.yml/badge.svg)](https://github.com/nlevitt/warcio-rs/actions)
+[![tests](https://github.com/nlevitt/warcio-rs/actions/workflows/tests.yml/badge.svg)](https://github.com/nlevitt/warcio-rs/actions)
 
 <img src="https://foundation.rust-lang.org/img/rust-logo-blk.svg" width="40" height="40"/>
 
