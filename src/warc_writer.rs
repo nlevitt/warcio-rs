@@ -111,6 +111,7 @@ mod tests {
 
     fn build_record() -> (WarcRecord, String) {
         let record = WarcRecord::builder()
+            .generate_record_id()
             .warc_type(WarcRecordType::Resource)
             .content_length(100)
             .warc_date(Utc.with_ymd_and_hms(2023, 1, 1, 0, 0, 0).unwrap())
@@ -148,8 +149,8 @@ mod tests {
         let mut w = WarcWriter::new(buf, false);
         w.write_record(record).unwrap();
         let buf = w.into_inner().into_inner();
-        print!("{}", from_utf8(&buf).unwrap());
-        assert_eq!(buf, record_str.as_bytes());
+        // print!("{}", from_utf8(&buf).unwrap());
+        assert_eq!(from_utf8(&buf).unwrap(), record_str);
     }
 
     #[test]

@@ -1,5 +1,7 @@
 use chrono::{DateTime, SecondsFormat, Utc};
+use std::fmt::{Display, Formatter};
 use std::io::{empty, Read};
+use std::slice::SplitN;
 use uuid::fmt::Urn;
 use uuid::Uuid;
 
@@ -59,9 +61,96 @@ impl WarcRecordHeaderName {
     }
 }
 
+impl From<&[u8]> for WarcRecordHeaderName {
+    fn from(name: &[u8]) -> Self {
+        if name.eq_ignore_ascii_case(b"WARC-Record-ID") {
+            WarcRecordHeaderName::WARCRecordID
+        } else if name.eq_ignore_ascii_case(b"Content-Length") {
+            WarcRecordHeaderName::ContentLength
+        } else if name.eq_ignore_ascii_case(b"WARC-Date") {
+            WarcRecordHeaderName::WARCDate
+        } else if name.eq_ignore_ascii_case(b"WARC-Type") {
+            WarcRecordHeaderName::WARCType
+        } else if name.eq_ignore_ascii_case(b"Content-Type") {
+            WarcRecordHeaderName::ContentType
+        } else if name.eq_ignore_ascii_case(b"WARC-Concurrent-To") {
+            WarcRecordHeaderName::WARCConcurrentTo
+        } else if name.eq_ignore_ascii_case(b"WARC-Block-Digest") {
+            WarcRecordHeaderName::WARCBlockDigest
+        } else if name.eq_ignore_ascii_case(b"WARC-Payload-Digest") {
+            WarcRecordHeaderName::WARCPayloadDigest
+        } else if name.eq_ignore_ascii_case(b"WARC-IP-Address") {
+            WarcRecordHeaderName::WARCIPAddress
+        } else if name.eq_ignore_ascii_case(b"WARC-Refers-To") {
+            WarcRecordHeaderName::WARCRefersTo
+        } else if name.eq_ignore_ascii_case(b"WARC-Refers-To-Target-URI") {
+            WarcRecordHeaderName::WARCRefersToTargetURI
+        } else if name.eq_ignore_ascii_case(b"WARC-Refers-To-Date") {
+            WarcRecordHeaderName::WARCRefersToDate
+        } else if name.eq_ignore_ascii_case(b"WARC-Target-URI") {
+            WarcRecordHeaderName::WARCTargetURI
+        } else if name.eq_ignore_ascii_case(b"WARC-Truncated") {
+            WarcRecordHeaderName::WARCTruncated
+        } else if name.eq_ignore_ascii_case(b"WARC-Warcinfo-ID") {
+            WarcRecordHeaderName::WARCWarcinfoID
+        } else if name.eq_ignore_ascii_case(b"WARC-Filename") {
+            WarcRecordHeaderName::WARCFilename
+        } else if name.eq_ignore_ascii_case(b"WARC-Profile") {
+            WarcRecordHeaderName::WARCProfile
+        } else if name.eq_ignore_ascii_case(b"WARC-Identified-Payload-Type") {
+            WarcRecordHeaderName::WARCIdentifiedPayloadType
+        } else if name.eq_ignore_ascii_case(b"WARC-Segment-Number") {
+            WarcRecordHeaderName::WARCSegmentNumber
+        } else if name.eq_ignore_ascii_case(b"WARC-Segment-Origin-ID") {
+            WarcRecordHeaderName::WARCSegmentOriginID
+        } else if name.eq_ignore_ascii_case(b"WARC-Segment-Total-Length") {
+            WarcRecordHeaderName::WARCSegmentTotalLength
+        } else {
+            WarcRecordHeaderName::Custom(name.to_vec())
+        }
+    }
+}
+
 pub struct WarcRecordHeader {
     pub name: WarcRecordHeaderName,
     pub value: Vec<u8>,
+}
+
+#[derive(Debug)]
+pub enum WarcRecordHeaderError {
+    NoKey,
+    NoValue,
+}
+
+impl Display for WarcRecordHeaderError {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        match self {
+            WarcRecordHeaderError::NoKey => {
+                write!(f, "NoKey")
+            }
+            WarcRecordHeaderError::NoValue => {
+                write!(f, "NoValue")
+            }
+        }
+    }
+}
+
+impl std::error::Error for WarcRecordHeaderError {}
+
+impl TryFrom<&[u8]> for WarcRecordHeader {
+    type Error = WarcRecordHeaderError;
+
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        // value.split()
+        let mut key_and_value = value.splitn(2, |b| b == &b':');
+        let key = key_and_value.next().ok_or(WarcRecordHeaderError::NoKey)?;
+        let value = key_and_value.next().ok_or(WarcRecordHeaderError::NoValue)?;
+        let header_name = WarcRecordHeaderName::from(key);
+        Ok(Self {
+            name: header_name,
+            value: value.to_vec(),
+        })
+    }
 }
 
 pub enum WarcRecordType {
@@ -92,6 +181,20 @@ impl WarcRecordType {
     }
 }
 
+pub enum WarcVersion {
+    WARC_1_1,
+    Custom(Vec<u8>),
+}
+
+impl WarcVersion {
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            WarcVersion::WARC_1_1 => b"WARC/1.1",
+            WarcVersion::Custom(warc_version) => warc_version,
+        }
+    }
+}
+
 pub struct WarcRecord {
     headers: Vec<WarcRecordHeader>,
     body: Box<dyn Read>,
@@ -106,10 +209,8 @@ impl WarcRecord {
     pub fn builder() -> WarcRecordBuilder {
         let record_id = Uuid::new_v4().urn();
         WarcRecordBuilder {
-            headers: Some(vec![WarcRecordHeader {
-                name: WarcRecordHeaderName::WARCRecordID,
-                value: format!("<{}>", record_id).into_bytes(),
-            }]),
+            version: WarcVersion::WARC_1_1,
+            headers: Some(Vec::new()),
             body: Some(Box::new(empty())),
             record_id,
         }
@@ -119,6 +220,7 @@ impl WarcRecord {
 /// Doesn't block duplicate headers, though the standard disallows this, except for
 /// warc-concurrent-to.
 pub struct WarcRecordBuilder {
+    version: WarcVersion,
     headers: Option<Vec<WarcRecordHeader>>,
     body: Option<Box<dyn Read>>,
     record_id: Urn,
@@ -130,28 +232,46 @@ impl WarcRecordBuilder {
         self
     }
 
-    pub fn add_header(mut self, name: WarcRecordHeaderName, value: &[u8]) -> Self {
-        self.headers.as_mut().unwrap().push(WarcRecordHeader {
-            name,
-            value: Vec::from(value),
-        });
+    pub fn version(mut self, version: WarcVersion) -> Self {
+        self.version = version;
         self
     }
 
+    pub fn add_header(mut self, header: WarcRecordHeader) -> Self {
+        self.headers.as_mut().unwrap().push(header);
+        self
+    }
+
+    pub fn add_header_name_value(mut self, name: WarcRecordHeaderName, value: &[u8]) -> Self {
+        self.add_header(WarcRecordHeader {
+            name,
+            value: Vec::from(value),
+        })
+    }
+
+    pub fn generate_record_id(self) -> Self {
+        let value = &format!("<{}>", self.record_id).into_bytes();
+        self.add_header_name_value(WarcRecordHeaderName::WARCRecordID, value)
+    }
+
+    pub fn record_id(self, record_id: &[u8]) -> Self {
+        self.add_header_name_value(WarcRecordHeaderName::WARCRecordID, record_id)
+    }
+
     pub fn warc_type(self, warc_type: WarcRecordType) -> Self {
-        self.add_header(WarcRecordHeaderName::WARCType, warc_type.as_bytes())
+        self.add_header_name_value(WarcRecordHeaderName::WARCType, warc_type.as_bytes())
     }
 
     /// Doesn't enforce that this matches actual length of body.
     pub fn content_length(self, content_length: u64) -> Self {
-        self.add_header(
+        self.add_header_name_value(
             WarcRecordHeaderName::ContentLength,
             content_length.to_string().as_bytes(),
         )
     }
 
     pub fn warc_date(self, warc_date: DateTime<Utc>) -> Self {
-        self.add_header(
+        self.add_header_name_value(
             WarcRecordHeaderName::WARCDate,
             warc_date
                 .to_rfc3339_opts(SecondsFormat::Micros, true)
@@ -160,19 +280,19 @@ impl WarcRecordBuilder {
     }
 
     pub fn content_type(self, content_type: &[u8]) -> Self {
-        self.add_header(WarcRecordHeaderName::ContentType, content_type)
+        self.add_header_name_value(WarcRecordHeaderName::ContentType, content_type)
     }
 
     pub fn warc_filename(self, filename: &[u8]) -> Self {
-        self.add_header(WarcRecordHeaderName::WARCFilename, filename)
+        self.add_header_name_value(WarcRecordHeaderName::WARCFilename, filename)
     }
 
     pub fn warc_target_uri(self, uri: &[u8]) -> Self {
-        self.add_header(WarcRecordHeaderName::WARCTargetURI, uri)
+        self.add_header_name_value(WarcRecordHeaderName::WARCTargetURI, uri)
     }
 
     pub fn warc_payload_digest(self, digest: &[u8]) -> Self {
-        self.add_header(WarcRecordHeaderName::WARCPayloadDigest, digest)
+        self.add_header_name_value(WarcRecordHeaderName::WARCPayloadDigest, digest)
     }
 
     pub fn build(mut self) -> WarcRecord {
@@ -194,7 +314,7 @@ mod tests {
 
     #[test]
     fn test_minimal_record() {
-        let record = WarcRecord::builder().build();
+        let record = WarcRecord::builder().generate_record_id().build();
         let (headers, mut body) = record.into_parts();
 
         assert_eq!(headers.len(), 1);
@@ -218,6 +338,7 @@ mod tests {
     #[test]
     fn test_all_the_headers() {
         let record = WarcRecord::builder()
+            .generate_record_id()
             .warc_type(WarcRecordType::Resource)
             .content_length(100)
             .warc_date(Utc.with_ymd_and_hms(2023, 1, 1, 0, 0, 0).unwrap())
@@ -255,7 +376,8 @@ mod tests {
     #[test]
     fn test_custom_header() {
         let record = WarcRecord::builder()
-            .add_header(
+            .generate_record_id()
+            .add_header_name_value(
                 WarcRecordHeaderName::Custom(b"custom-warc-header".to_vec()),
                 b"toot",
             )
@@ -270,6 +392,7 @@ mod tests {
     #[test]
     fn test_custom_warc_type() {
         let record = WarcRecord::builder()
+            .generate_record_id()
             .warc_type(WarcRecordType::Custom(b"special".to_vec()))
             .build();
         let (headers, _) = record.into_parts();
