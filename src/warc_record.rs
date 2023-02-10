@@ -1,7 +1,6 @@
 use chrono::{DateTime, SecondsFormat, Utc};
 use std::fmt::{Display, Formatter};
 use std::io::{empty, Read};
-use std::slice::SplitN;
 use uuid::fmt::Urn;
 use uuid::Uuid;
 
@@ -137,19 +136,27 @@ impl Display for WarcRecordHeaderError {
 
 impl std::error::Error for WarcRecordHeaderError {}
 
-impl TryFrom<&[u8]> for WarcRecordHeader {
-    type Error = WarcRecordHeaderError;
-
-    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-        // value.split()
-        let mut key_and_value = value.splitn(2, |b| b == &b':');
-        let key = key_and_value.next().ok_or(WarcRecordHeaderError::NoKey)?;
-        let value = key_and_value.next().ok_or(WarcRecordHeaderError::NoValue)?;
-        let header_name = WarcRecordHeaderName::from(key);
-        Ok(Self {
-            name: header_name,
-            value: value.to_vec(),
-        })
+// impl TryFrom<&[u8]> for WarcRecordHeader {
+//     type Error = WarcRecordHeaderError;
+//
+//     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+//         // value.split()
+//         let mut key_and_value = value.splitn(2, |b| b == &b':');
+//         let key = key_and_value.next().ok_or(WarcRecordHeaderError::NoKey)?;
+//         let value = key_and_value.next().ok_or(WarcRecordHeaderError::NoValue)?;
+//         let header_name = WarcRecordHeaderName::from(key);
+//         Ok(Self {
+//             name: header_name,
+//             value: value.to_vec(),
+//         })
+//     }
+// }
+impl From<httparse::Header<'_>> for WarcRecordHeader {
+    fn from(value: httparse::Header) -> Self {
+        Self {
+            name: WarcRecordHeaderName::from(value.name.as_bytes()),
+            value: value.value.to_vec(),
+        }
     }
 }
 

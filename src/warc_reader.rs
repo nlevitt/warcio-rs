@@ -1,5 +1,7 @@
-use crate::{WarcRecord, WarcRecordHeader, WarcVersion};
+use crate::{WarcRecord, WarcRecordHeader, WarcRecordHeaderName, WarcVersion};
+use httparse::{parse_headers, Header, Status};
 use std::io::{BufRead, Read};
+use std::str::from_utf8;
 /*
 use std::error::Error;
 use std::fs::File;
@@ -59,16 +61,116 @@ fn read_version_line<R: BufRead>(reader: &mut R) -> Result<WarcVersion, std::io:
     }
 }
 
+/*
+ * Tested parse_headers() in rust playground:
+ *
+ *     use std::str::from_utf8;
+ *     use httparse::parse_headers;
+ *
+ *     fn main() -> Result<(), Box<dyn std::error::Error>> {
+ *         let test_bufs: [&[u8]; 15] = [
+ *             b"",
+ *             b"\n",
+ *             b"\r\n",
+ *             b"\n\n",
+ *             b"\r\n\n",
+ *             b"\n\r\n",
+ *             b"\r\n\r\n",
+ *             b"foo:bar\n",
+ *             b"foo:bar\r\n",
+ *             b"foo:  bar  \n",
+ *             b"foo:  bar  baz  \n",
+ *             b"foo : bar\n",
+ *             b"foo  bar  :  baz  quux  \r\n",
+ *             b"  foo  :  baz  quux  \r\n",
+ *             b"  foo  bar  :  baz  quux  \r\n",
+ *         ];
+ *         for i in 0..test_bufs.len() {
+ *             println!("\n{:?}", from_utf8(test_bufs[i])?);
+ *             let mut headers = [httparse::EMPTY_HEADER; 2];
+ *             let rv = parse_headers(test_bufs[i], &mut headers);
+ *             match rv {
+ *                 Ok(status) => {
+ *                     println!("status={:?}", status);
+ *                     println!("headers={:?}", headers);
+ *                 }
+ *                 Err(e) => {
+ *                     println!("e={:?}", e);
+ *                 }
+ *             }
+ *         }
+ *
+ *         Ok(())
+ *     }
+ *
+ * Output:
+ *
+ *     ""
+ *     status=Partial
+ *     headers=[Header { name: "", value: "" }, Header { name: "", value: "" }]
+ *
+ *     "\n"
+ *     status=Complete((1, []))
+ *     headers=[Header { name: "", value: "" }, Header { name: "", value: "" }]
+ *
+ *     "\r\n"
+ *     status=Complete((2, []))
+ *     headers=[Header { name: "", value: "" }, Header { name: "", value: "" }]
+ *
+ *     "\n\n"
+ *     status=Complete((1, []))
+ *     headers=[Header { name: "", value: "" }, Header { name: "", value: "" }]
+ *
+ *     "\r\n\n"
+ *     status=Complete((2, []))
+ *     headers=[Header { name: "", value: "" }, Header { name: "", value: "" }]
+ *
+ *     "\n\r\n"
+ *     status=Complete((1, []))
+ *     headers=[Header { name: "", value: "" }, Header { name: "", value: "" }]
+ *
+ *     "\r\n\r\n"
+ *     status=Complete((2, []))
+ *     headers=[Header { name: "", value: "" }, Header { name: "", value: "" }]
+ *
+ *     "foo:bar\n"
+ *     status=Partial
+ *     headers=[Header { name: "foo", value: "bar" }, Header { name: "", value: "" }]
+ *
+ *     "foo:bar\r\n"
+ *     status=Partial
+ *     headers=[Header { name: "foo", value: "bar" }, Header { name: "", value: "" }]
+ *
+ *     "foo:  bar  \n"
+ *     status=Partial
+ *     headers=[Header { name: "foo", value: "bar" }, Header { name: "", value: "" }]
+ *
+ *     "foo:  bar  baz  \n"
+ *     status=Partial
+ *     headers=[Header { name: "foo", value: "bar  baz" }, Header { name: "", value: "" }]
+ *
+ *     "foo : bar\n"
+ *     e=HeaderName
+ *
+ *     "foo  bar  :  baz  quux  \r\n"
+ *     e=HeaderName
+ *
+ *     "  foo  :  baz  quux  \r\n"
+ *     e=HeaderName
+ *
+ *     "  foo  bar  :  baz  quux  \r\n"
+ *     e=HeaderName
+ */
+
 fn read_header<R: BufRead>(
     reader: &mut R,
 ) -> Result<Option<WarcRecordHeader>, Box<dyn std::error::Error>> {
     let buf = read_line(reader)?;
-    let buf = trim_newline(&buf);
-    if buf.len() == 0 {
-        return Ok(None);
-    };
-    let header = WarcRecordHeader::try_from(buf)?;
-    Ok(Some(header))
+    let mut headers = [httparse::EMPTY_HEADER; 1];
+    match httparse::parse_headers(&buf, &mut headers)? {
+        Status::Partial => Ok(Some(WarcRecordHeader::from(headers[0]))),
+        Status::Complete(_) => Ok(None),
+    }
 }
 
 impl<R: BufRead> WarcReader<R> {
@@ -77,18 +179,24 @@ impl<R: BufRead> WarcReader<R> {
     }
 
     // Returns Ok(None) at EOF
-    pub fn read_record(&mut self) -> Result<Option<WarcRecord>, Box<dyn std::error::Error>> {
-        let builder = WarcRecord::builder();
+    pub fn read_record(&'static mut self) -> Result<Option<WarcRecord>, Box<dyn std::error::Error>> {
+        let mut builder = WarcRecord::builder();
         let version = read_version_line(&mut self.reader)?;
-        let mut builder = builder.version(version);
+        builder = builder.version(version);
+        let mut content_length: u64 = 0;
         loop {
             match read_header(&mut self.reader)? {
                 None => break,
                 Some(header) => {
+                    if header.name == WarcRecordHeaderName::ContentLength {
+                        content_length = from_utf8(&header.value)?.parse()?;
+                    }
                     builder = builder.add_header(header);
                 }
             }
         }
+        read_line(&mut self.reader)?; // discard empty line
+        builder = builder.body(Box::new(self.reader.by_ref().take(content_length)));
 
         Ok(Some(builder.build()))
     }
@@ -96,11 +204,12 @@ impl<R: BufRead> WarcReader<R> {
 
 #[cfg(test)]
 mod tests {
-    use crate::WarcReader;
+    use crate::{WarcReader, WarcRecordHeaderName};
     use std::io::Cursor;
+    use std::str::from_utf8;
 
     #[test]
-    fn test_read_warc() {
+    fn test_read_warc() -> Result<(), Box<dyn std::error::Error>> {
         let warc = concat!(
             "WARC/1.1\r\n",
             "WARC-Record-ID: <urn:uuid:cae45b6d-9ba0-42c4-9d06-3c3b9bb61e5f>\r\n",
@@ -150,15 +259,34 @@ mod tests {
             "\r\n"
         );
         let mut warc_reader = WarcReader::new(Cursor::new(Vec::from(warc.as_bytes())), false);
-        loop {
-            match warc_reader.read_record() {
-                Ok(Some(record)) => {
-                    let (headers, _body) = record.into_parts();
-                    assert_eq!(headers.len(), 7);
-                }
-                Ok(None) => {}
-                Err(_e) => {}
-            }
-        }
+
+        let record = warc_reader.read_record()?.unwrap();
+        let (headers, _body) = record.into_parts();
+        assert_eq!(headers.len(), 7);
+        assert!(headers[0].name == WarcRecordHeaderName::WARCRecordID);
+        assert_eq!(
+            from_utf8(&headers[0].value)?,
+            "<urn:uuid:cae45b6d-9ba0-42c4-9d06-3c3b9bb61e5f>",
+        );
+        assert!(headers[1].name == WarcRecordHeaderName::WARCType);
+        assert_eq!(from_utf8(&headers[1].value)?, "response",);
+        assert!(headers[2].name == WarcRecordHeaderName::WARCDate);
+        assert_eq!(from_utf8(&headers[2].value)?, "2023-01-15T22:32:46.308080Z",);
+        assert!(headers[3].name == WarcRecordHeaderName::WARCTargetURI);
+        assert_eq!(from_utf8(&headers[3].value)?, "https://httpbin.org/get",);
+        assert!(headers[4].name == WarcRecordHeaderName::WARCPayloadDigest);
+        assert_eq!(
+            from_utf8(&headers[4].value)?,
+            "sha256:04b4d2a634fe38b41c1e9d15987f19560b85ff332e0205b2d9e2db44a43fbc6d"
+        );
+        assert!(headers[5].name == WarcRecordHeaderName::ContentType);
+        assert_eq!(
+            from_utf8(&headers[5].value)?,
+            "application/http;msgtype=response",
+        );
+        assert!(headers[6].name == WarcRecordHeaderName::ContentLength);
+        assert_eq!(from_utf8(&headers[6].value)?, "485",);
+
+        Ok(())
     }
 }
