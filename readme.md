@@ -4,8 +4,6 @@
 
 # warcio-rs
 
-## WARC writing library for rust
-
-May support reading in the future. :)
+## Streaming WARC reading and writing library for rust
 
 https://iipc.github.io/warc-specifications/specifications/warc-format/warc-1.1/
