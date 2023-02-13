@@ -1,6 +1,6 @@
 use chrono::{DateTime, SecondsFormat, Utc};
 use std::fmt::{Display, Formatter};
-use std::io::{empty, Read};
+use std::io::Read;
 use uuid::fmt::Urn;
 use uuid::Uuid;
 
@@ -189,36 +189,36 @@ impl WarcRecordType {
 }
 
 pub enum WarcVersion {
-    WARC_1_1,
+    Warc1_1,
     Custom(Vec<u8>),
 }
 
 impl WarcVersion {
     pub fn as_bytes(&self) -> &[u8] {
         match self {
-            WarcVersion::WARC_1_1 => b"WARC/1.1",
+            WarcVersion::Warc1_1 => b"WARC/1.1",
             WarcVersion::Custom(warc_version) => warc_version,
         }
     }
 }
 
-pub struct WarcRecord {
-    headers: Vec<WarcRecordHeader>,
-    body: Box<dyn Read>,
+pub struct WarcRecord<R: Read> {
+    pub(crate) headers: Vec<WarcRecordHeader>,
+    pub(crate) body: R,
     pub record_id: Urn,
 }
 
-impl WarcRecord {
-    pub(crate) fn into_parts(self) -> (Vec<WarcRecordHeader>, Box<dyn Read>) {
+impl<R: Read> WarcRecord<R> {
+    pub(crate) fn into_parts(self) -> (Vec<WarcRecordHeader>, R) {
         (self.headers, self.body)
     }
 
-    pub fn builder() -> WarcRecordBuilder {
+    pub fn builder() -> WarcRecordBuilder<R> {
         let record_id = Uuid::new_v4().urn();
         WarcRecordBuilder {
-            version: WarcVersion::WARC_1_1,
+            version: WarcVersion::Warc1_1,
             headers: Some(Vec::new()),
-            body: Some(Box::new(empty())),
+            body: None,
             record_id,
         }
     }
@@ -226,15 +226,15 @@ impl WarcRecord {
 
 /// Doesn't block duplicate headers, though the standard disallows this, except for
 /// warc-concurrent-to.
-pub struct WarcRecordBuilder {
+pub struct WarcRecordBuilder<R: Read> {
     version: WarcVersion,
     headers: Option<Vec<WarcRecordHeader>>,
-    body: Option<Box<dyn Read>>,
+    body: Option<R>,
     record_id: Urn,
 }
 
-impl WarcRecordBuilder {
-    pub fn body(mut self, body: Box<dyn Read>) -> Self {
+impl<R: Read> WarcRecordBuilder<R> {
+    pub fn body(mut self, body: R) -> Self {
         self.body = Some(body);
         self
     }
@@ -249,7 +249,7 @@ impl WarcRecordBuilder {
         self
     }
 
-    pub fn add_header_name_value(mut self, name: WarcRecordHeaderName, value: &[u8]) -> Self {
+    pub fn add_header_name_value(self, name: WarcRecordHeaderName, value: &[u8]) -> Self {
         self.add_header(WarcRecordHeader {
             name,
             value: Vec::from(value),
@@ -302,7 +302,7 @@ impl WarcRecordBuilder {
         self.add_header_name_value(WarcRecordHeaderName::WARCPayloadDigest, digest)
     }
 
-    pub fn build(mut self) -> WarcRecord {
+    pub fn build(mut self) -> WarcRecord<R> {
         WarcRecord {
             headers: self.headers.take().unwrap(),
             body: self.body.take().unwrap(),
@@ -316,12 +316,16 @@ mod tests {
     use crate::{WarcRecord, WarcRecordHeaderName, WarcRecordType};
     use chrono::{TimeZone, Utc};
     use regex::bytes::Regex;
-    use std::io::Read;
+    use std::io::{empty, Read};
     use std::str::from_utf8;
 
     #[test]
     fn test_minimal_record() {
-        let record = WarcRecord::builder().generate_record_id().build();
+        let body: Box<dyn Read> = Box::new(empty());
+        let record: WarcRecord<Box<dyn Read>> = WarcRecord::builder()
+            .generate_record_id()
+            .body(body)
+            .build();
         let (headers, mut body) = record.into_parts();
 
         assert_eq!(headers.len(), 1);
@@ -344,7 +348,8 @@ mod tests {
 
     #[test]
     fn test_all_the_headers() {
-        let record = WarcRecord::builder()
+        let body: Box<dyn Read> = Box::new(empty());
+        let record: WarcRecord<Box<dyn Read>> = WarcRecord::builder()
             .generate_record_id()
             .warc_type(WarcRecordType::Resource)
             .content_length(100)
@@ -355,6 +360,7 @@ mod tests {
             .warc_payload_digest(
                 b"sha256:0b0edecafc0ffeec0c0acafef00ddeadface0ffaccededd00dadeffacedd00d9",
             )
+            .body(body)
             .build();
 
         let (headers, _) = record.into_parts();
@@ -382,12 +388,14 @@ mod tests {
 
     #[test]
     fn test_custom_header() {
-        let record = WarcRecord::builder()
+        let body: Box<dyn Read> = Box::new(empty());
+        let record: WarcRecord<Box<dyn Read>> = WarcRecord::builder()
             .generate_record_id()
             .add_header_name_value(
                 WarcRecordHeaderName::Custom(b"custom-warc-header".to_vec()),
                 b"toot",
             )
+            .body(body)
             .build();
         let (headers, _) = record.into_parts();
         assert_eq!(headers.len(), 2);
@@ -398,9 +406,11 @@ mod tests {
 
     #[test]
     fn test_custom_warc_type() {
-        let record = WarcRecord::builder()
+        let body: Box<dyn Read> = Box::new(empty());
+        let record: WarcRecord<Box<dyn Read>> = WarcRecord::builder()
             .generate_record_id()
             .warc_type(WarcRecordType::Custom(b"special".to_vec()))
+            .body(body)
             .build();
         let (headers, _) = record.into_parts();
         assert_eq!(headers.len(), 2);
