@@ -18,7 +18,7 @@ impl<W: Write + Seek> WarcWriter<W> {
         Self { writer, gzip }
     }
 
-    pub fn write_record(&mut self, record: WarcRecord) -> Result<(), Error> {
+    pub fn write_record(&mut self, record: WarcRecord<Box<dyn Read>>) -> Result<(), Error> {
         if self.gzip {
             GzipRecordWriter::new(&mut self.writer).write_record(record)
         } else {
@@ -48,7 +48,7 @@ impl<W: Write> UncompressedRecordWriter<W> {
         Self { writer }
     }
 
-    pub fn write_record(&mut self, record: WarcRecord) -> Result<(), Error> {
+    pub fn write_record(&mut self, record: WarcRecord<Box<dyn Read>>) -> Result<(), Error> {
         let (headers, body) = record.into_parts();
         self.writer.write_all(WARC_1_1)?;
         write_headers(&mut self.writer, headers)?;
@@ -64,7 +64,7 @@ impl<W: Write> GzipRecordWriter<W> {
         Self { writer }
     }
 
-    pub fn write_record(&mut self, record: WarcRecord) -> Result<(), Error> {
+    pub fn write_record(&mut self, record: WarcRecord<Box<dyn Read>>) -> Result<(), Error> {
         let (headers, body) = record.into_parts();
         let mut w = GzEncoder::new(&mut self.writer, Compression::default());
         w.write_all(WARC_1_1)?;
@@ -109,8 +109,10 @@ mod tests {
     use std::io::{Cursor, Read, Seek, SeekFrom};
     use std::str::from_utf8;
 
-    fn build_record() -> (WarcRecord, String) {
+    fn build_record() -> (WarcRecord<Box<dyn Read>>, String) {
+        let body: Box<dyn Read> = Box::new(Cursor::new(b"I'm the body".to_vec()));
         let record = WarcRecord::builder()
+            .generate_record_id()
             .warc_type(WarcRecordType::Resource)
             .content_length(100)
             .warc_date(Utc.with_ymd_and_hms(2023, 1, 1, 0, 0, 0).unwrap())
@@ -120,7 +122,7 @@ mod tests {
             .warc_payload_digest(
                 b"sha256:0b0edecafc0ffeec0c0acafef00ddeadface0ffaccededd00dadeffacedd00d9",
             )
-            .body(Box::new(Cursor::new(b"I'm the body".to_vec())))
+            .body(body)
             .build();
         let record_str = format!(
             concat!(
@@ -148,8 +150,8 @@ mod tests {
         let mut w = WarcWriter::new(buf, false);
         w.write_record(record).unwrap();
         let buf = w.into_inner().into_inner();
-        print!("{}", from_utf8(&buf).unwrap());
-        assert_eq!(buf, record_str.as_bytes());
+        // print!("{}", from_utf8(&buf).unwrap());
+        assert_eq!(from_utf8(&buf).unwrap(), record_str);
     }
 
     #[test]
