@@ -5,7 +5,7 @@ use uuid::fmt::Urn;
 use uuid::Uuid;
 
 // https://iipc.github.io/warc-specifications/specifications/warc-format/warc-1.1/#named-fields
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug)]
 pub enum WarcRecordHeaderName {
     WARCRecordID,
     ContentLength,
@@ -136,21 +136,6 @@ impl Display for WarcRecordHeaderError {
 
 impl std::error::Error for WarcRecordHeaderError {}
 
-// impl TryFrom<&[u8]> for WarcRecordHeader {
-//     type Error = WarcRecordHeaderError;
-//
-//     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-//         // value.split()
-//         let mut key_and_value = value.splitn(2, |b| b == &b':');
-//         let key = key_and_value.next().ok_or(WarcRecordHeaderError::NoKey)?;
-//         let value = key_and_value.next().ok_or(WarcRecordHeaderError::NoValue)?;
-//         let header_name = WarcRecordHeaderName::from(key);
-//         Ok(Self {
-//             name: header_name,
-//             value: value.to_vec(),
-//         })
-//     }
-// }
 impl From<httparse::Header<'_>> for WarcRecordHeader {
     fn from(value: httparse::Header) -> Self {
         Self {
@@ -417,5 +402,55 @@ mod tests {
         assert_eq!(&headers[0].name.as_bytes(), b"WARC-Record-ID");
         assert_eq!(&headers[1].name.as_bytes(), b"WARC-Type");
         assert_eq!(&headers[1].value, b"special");
+    }
+
+    #[test]
+    fn test_header_name_from() {
+        for orig_header_name in [
+            WarcRecordHeaderName::WARCRecordID,
+            WarcRecordHeaderName::ContentLength,
+            WarcRecordHeaderName::WARCDate,
+            WarcRecordHeaderName::WARCType,
+            WarcRecordHeaderName::ContentType,
+            WarcRecordHeaderName::WARCConcurrentTo,
+            WarcRecordHeaderName::WARCBlockDigest,
+            WarcRecordHeaderName::WARCPayloadDigest,
+            WarcRecordHeaderName::WARCIPAddress,
+            WarcRecordHeaderName::WARCRefersTo,
+            WarcRecordHeaderName::WARCRefersToTargetURI,
+            WarcRecordHeaderName::WARCRefersToDate,
+            WarcRecordHeaderName::WARCTargetURI,
+            WarcRecordHeaderName::WARCTruncated,
+            WarcRecordHeaderName::WARCWarcinfoID,
+            WarcRecordHeaderName::WARCFilename,
+            WarcRecordHeaderName::WARCProfile,
+            WarcRecordHeaderName::WARCIdentifiedPayloadType,
+            WarcRecordHeaderName::WARCSegmentNumber,
+            WarcRecordHeaderName::WARCSegmentOriginID,
+            WarcRecordHeaderName::WARCSegmentTotalLength,
+        ] {
+            assert_eq!(
+                WarcRecordHeaderName::from(&*orig_header_name.as_bytes().to_ascii_lowercase()),
+                orig_header_name
+            );
+            assert_eq!(
+                WarcRecordHeaderName::from(&*orig_header_name.as_bytes().to_ascii_lowercase()),
+                orig_header_name
+            );
+        }
+    }
+
+    #[test]
+    fn test_header_name_from_custom() {
+        let custom_value = b"something-else";
+        let header_name = WarcRecordHeaderName::from(&custom_value[..]);
+        match header_name {
+            WarcRecordHeaderName::Custom(value) => {
+                assert_eq!(value, custom_value);
+            }
+            _ => {
+                assert!(false);
+            }
+        }
     }
 }
