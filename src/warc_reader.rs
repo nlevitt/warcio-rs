@@ -1,7 +1,6 @@
 use crate::{WarcRecord, WarcRecordHeader, WarcRecordHeaderName, WarcVersion};
-use flate2::read::{GzDecoder, MultiGzDecoder};
 use httparse::Status;
-use std::io::{BufRead, BufReader, Read, Take};
+use std::io::{BufRead, Read, Take};
 use std::str::from_utf8;
 
 fn read_line<R: BufRead>(reader: &mut R) -> Result<Vec<u8>, std::io::Error> {
@@ -72,19 +71,7 @@ impl<R: BufRead> WarcReader<R> {
     }
 }
 
-pub struct GzipWarcReader<R: BufRead> {
-    reader: Option<BufReader<MultiGzDecoder<R>>>,
-    current_record: Option<WarcRecord<Take<BufReader<MultiGzDecoder<R>>>>>,
-}
-
-impl<R: BufRead> GzipWarcReader<R> {
-    pub fn new(reader: R) -> Self {
-        Self {
-            reader: Some(BufReader::new(MultiGzDecoder::new(reader))),
-            current_record: None,
-        }
-    }
-}
+// Some(BufReader::new(MultiGzDecoder::new(reader))),
 
 impl<R: BufRead> LendingIterator for WarcReader<R> {
     type Item<'a> = Result<Option<&'a mut WarcRecord<Take<R>>>, Box<dyn std::error::Error>> where Self: 'a;
@@ -128,57 +115,9 @@ impl<R: BufRead> LendingIterator for WarcReader<R> {
     }
 }
 
-impl<R: BufRead> LendingIterator for GzipWarcReader<R> {
-    type Item<'a> = Result<Option<&'a mut WarcRecord<Take<BufReader<MultiGzDecoder<R>>>>>, Box<dyn std::error::Error>> where Self: 'a;
-
-    fn next(
-        &mut self,
-    ) -> Result<
-        Option<&mut WarcRecord<Take<BufReader<MultiGzDecoder<R>>>>>,
-        Box<dyn std::error::Error>,
-    > {
-        let mut reader = if self.current_record.is_some() {
-            let (_, last_body) = self.current_record.take().unwrap().into_parts();
-            let mut reader = last_body.into_inner();
-            read_line(&mut reader)?; // discard empty line
-            read_line(&mut reader)?; // discard empty line
-            reader
-        } else {
-            self.reader.take().unwrap()
-        };
-
-        // Check for end of warc. XXX Handle EOF at any point somehow
-        if reader.fill_buf()?.len() == 0 {
-            return Ok(None);
-        }
-
-        let version = read_version_line(&mut reader)?;
-        let mut builder = WarcRecord::builder();
-        builder = builder.version(version);
-        let mut content_length: u64 = 0;
-        loop {
-            // TODO cap number of headers we store
-            match read_header(&mut reader)? {
-                None => break,
-                Some(header) => {
-                    if header.name == WarcRecordHeaderName::ContentLength {
-                        content_length = from_utf8(&header.value)?.parse()?;
-                    }
-                    builder = builder.add_header(header);
-                }
-            }
-        }
-        builder = builder.body(reader.take(content_length));
-
-        self.current_record = Some(builder.build());
-        Ok(self.current_record.as_mut())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::warc_reader::LendingIterator;
-    use std::error::Error;
 
     static WARC_RECORDS: [&str; 2] = [
         concat!(
@@ -232,17 +171,18 @@ mod tests {
             "\r\n"
         ),
     ];
-    use crate::{GzipWarcReader, WarcReader, WarcRecord};
+    use crate::{WarcReader, WarcRecord};
+    use flate2::read::MultiGzDecoder;
     use flate2::write::GzEncoder;
     use flate2::Compression;
-    use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+    use std::io::{BufReader, Cursor, Read, Seek, SeekFrom, Write};
     use std::str::from_utf8;
 
     fn check_first_record<R: Read>(
         record: Option<&mut WarcRecord<R>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         assert!(record.is_some());
-        let mut record = record.unwrap();
+        let record = record.unwrap();
         let mut buf: Vec<u8> = Vec::new();
         record.body.read_to_end(&mut buf)?;
         assert_eq!(
@@ -278,7 +218,7 @@ mod tests {
         record: Option<&mut WarcRecord<R>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         assert!(record.is_some());
-        let mut record = record.unwrap();
+        let record = record.unwrap();
         let mut buf: Vec<u8> = Vec::new();
         record.body.read_to_end(&mut buf)?;
         assert_eq!(
@@ -314,14 +254,14 @@ mod tests {
     #[test]
     fn test_read_gzipped_warc() -> Result<(), Box<dyn std::error::Error>> {
         let mut cursor = Cursor::new(Vec::<u8>::new());
-        let mut w = GzEncoder::new(&mut cursor, Compression::default());
         for record_str in WARC_RECORDS {
+            let mut w = GzEncoder::new(&mut cursor, Compression::default());
             w.write_all(record_str.as_bytes())?;
+            w.finish()?;
         }
-        w.finish()?;
         cursor.seek(SeekFrom::Start(0))?;
 
-        let mut warc_reader = GzipWarcReader::new(cursor);
+        let mut warc_reader = WarcReader::new(BufReader::new(MultiGzDecoder::new(cursor)));
 
         // We have this check_first_record / check_second_record code because (I think) it's not
         // easy/possible to write a function that takes either a WarcReader or GzipWarcReader.
