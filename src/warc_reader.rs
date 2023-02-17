@@ -79,7 +79,15 @@ impl<R: BufRead> LendingIterator for WarcReader<R> {
 
     fn next(&mut self) -> Result<Option<&mut WarcRecord<Take<R>>>, Box<dyn std::error::Error>> {
         let mut reader = if self.current_record.is_some() {
-            let (_, last_body) = self.current_record.take().unwrap().into_parts();
+            let (_, mut last_body) = self.current_record.take().unwrap().into_parts();
+            // XXX what happens if body is wrong length?
+            loop {
+                let n = last_body.fill_buf()?.len();
+                if n == 0 {
+                    break;
+                }
+                last_body.consume(n);
+            }
             let mut reader = last_body.into_inner();
             read_line(&mut reader)?; // discard empty line
             read_line(&mut reader)?; // discard empty line
@@ -288,6 +296,25 @@ mod tests {
         );
         let mut warc_reader = WarcReader::new(Cursor::new(Vec::from(partial_warc_record)));
         assert!(warc_reader.next().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn test_neither_body_read() -> Result<(), Box<dyn std::error::Error>> {
+        let mut warc_reader = WarcReader::new(Cursor::new(Vec::from(WARC_RECORDS.concat())));
+        warc_reader.next()?;
+        warc_reader.next()?;
+        assert!(warc_reader.next()?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_first_body_not_read() -> Result<(), Box<dyn std::error::Error>> {
+        let mut warc_reader = WarcReader::new(Cursor::new(Vec::from(WARC_RECORDS.concat())));
+        warc_reader.next()?;
+        let record = warc_reader.next()?;
+        check_second_record(record)?;
+        assert!(warc_reader.next()?.is_none());
         Ok(())
     }
 }
