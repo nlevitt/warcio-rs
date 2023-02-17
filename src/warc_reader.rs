@@ -1,9 +1,12 @@
 use crate::{WarcRecord, WarcRecordHeader, WarcRecordHeaderName, WarcVersion};
 use httparse::Status;
-use std::io::{BufRead, Read, Take};
+use std::io::{BufRead, ErrorKind, Read, Take};
 use std::str::from_utf8;
 
 fn read_line<R: BufRead>(reader: &mut R) -> Result<Vec<u8>, std::io::Error> {
+    if reader.fill_buf()?.len() == 0 {
+        return Err(std::io::Error::from(ErrorKind::UnexpectedEof));
+    }
     let mut buf = Vec::<u8>::new();
     let mut limited_reader = reader.by_ref().take(65536);
     limited_reader.read_until(b'\n', &mut buf)?;
@@ -85,7 +88,7 @@ impl<R: BufRead> LendingIterator for WarcReader<R> {
             self.reader.take().unwrap()
         };
 
-        // Check for end of warc. XXX Handle EOF at any point somehow
+        // Check for end of warc (at legal spot)
         if reader.fill_buf()?.len() == 0 {
             return Ok(None);
         }
@@ -166,7 +169,8 @@ mod tests {
             "user-agent: curl/7.79.1\r\n",
             "accept: */*\r\n",
             "\r\n",
-            "\r\n"
+            "\r\n",
+            "\r\n",
         ),
     ];
     use crate::{WarcReader, WarcRecord};
@@ -270,6 +274,20 @@ mod tests {
         check_second_record(record)?;
         assert!(warc_reader.next()?.is_none());
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_error_if_eof_in_warc_headers() -> Result<(), Box<dyn std::error::Error>> {
+        let partial_warc_record = concat!(
+            "WARC/1.1\r\n",
+            "WARC-Record-ID: <urn:uuid:33f0ed45-5b1f-4bae-8759-ecb4844e2997>\r\n",
+            "WARC-Type: request\r\n",
+            "WARC-Date: 2023-01-15T22:32:46.308080Z\r\n",
+            "WARC-Target-URI: https://http",
+        );
+        let mut warc_reader = WarcReader::new(Cursor::new(Vec::from(partial_warc_record)));
+        assert!(warc_reader.next().is_err());
         Ok(())
     }
 }
