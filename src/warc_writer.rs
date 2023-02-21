@@ -97,7 +97,8 @@ impl<W: Write> GzipRecordWriter<W> {
         w.write_all(CRLF)?;
         write_body(&mut w, body)?;
         w.write_all(CRLFCRLF)?;
-        w.finish()?;
+        let inner = w.finish()?;
+        inner.flush()?;
         Ok(())
     }
 }

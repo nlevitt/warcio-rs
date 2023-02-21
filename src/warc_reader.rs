@@ -52,7 +52,7 @@ fn read_header<R: BufRead>(
 // https://blog.rust-lang.org/2022/10/28/gats-stabilization.html
 // Simpler proof of concept:
 // https://play.rust-lang.org/?version=stable&mode=debug&edition=2021&gist=955cb06a498c29433ee2ccea162f091e
-trait LendingIterator {
+pub trait LendingIterator {
     type Item<'a>
     where
         Self: 'a;

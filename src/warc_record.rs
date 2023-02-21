@@ -188,13 +188,13 @@ impl WarcVersion {
 }
 
 pub struct WarcRecord<R: Read> {
-    pub(crate) headers: Vec<WarcRecordHeader>,
-    pub(crate) body: R,
+    pub headers: Vec<WarcRecordHeader>,
+    pub body: R,
     pub record_id: Urn,
 }
 
 impl<R: Read> WarcRecord<R> {
-    pub(crate) fn into_parts(self) -> (Vec<WarcRecordHeader>, R) {
+    pub fn into_parts(self) -> (Vec<WarcRecordHeader>, R) {
         (self.headers, self.body)
     }
 
