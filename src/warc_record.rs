@@ -199,6 +199,10 @@ impl<R: Read> WarcRecord<R> {
     }
 
     pub fn builder() -> WarcRecordBuilder<R> {
+        // This record id is a placeholder so that `WarcRecord::record_id` doesn't have to be an
+        // `Option`. Slyly named `WarcRecordBuilder::generate_record_id()` adds the
+        // WARC-Record-ID header using the already computed value. `record_id()` can be used to
+        // set the record ID to an arbitrary value.
         let record_id = Uuid::new_v4().urn();
         WarcRecordBuilder {
             version: WarcVersion::Warc1_1,
@@ -255,7 +259,7 @@ impl<R: Read> WarcRecordBuilder<R> {
     }
 
     /// Doesn't enforce that this matches actual length of body.
-    pub fn content_length(self, content_length: u64) -> Self {
+    pub fn content_length(self, content_length: usize) -> Self {
         self.add_header_name_value(
             WarcRecordHeaderName::ContentLength,
             content_length.to_string().as_bytes(),

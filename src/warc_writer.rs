@@ -1,24 +1,49 @@
 use crate::{WarcRecord, WarcRecordHeader};
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use std::io::{Error, Read, Seek, SeekFrom, Write};
+use std::io::{Error, Read, Write};
 
 const WARC_1_1: &[u8; 10] = b"WARC/1.1\r\n";
 const CRLF: &[u8; 2] = b"\r\n";
 const CRLFCRLF: &[u8; 4] = b"\r\n\r\n";
 
-// TODO Seek is only used to get current offset, but we could keep track of that by counting bytes
-pub struct WarcWriter<W: Write + Seek> {
-    writer: W,
+struct ByteCountingWriter<W> {
+    inner: W,
+    count: u64,
+}
+
+impl<W> ByteCountingWriter<W> {
+    fn new(inner: W) -> Self {
+        Self { inner, count: 0 }
+    }
+}
+
+impl<W: Write> Write for ByteCountingWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> Result<usize, std::io::Error> {
+        let n = self.inner.write(buf)?;
+        self.count += n as u64;
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> Result<(), std::io::Error> {
+        self.inner.flush()
+    }
+}
+
+pub struct WarcWriter<W: Write> {
+    writer: ByteCountingWriter<W>,
     gzip: bool,
 }
 
-impl<W: Write + Seek> WarcWriter<W> {
+impl<W: Write> WarcWriter<W> {
     pub fn new(writer: W, gzip: bool) -> Self {
-        Self { writer, gzip }
+        Self {
+            writer: ByteCountingWriter::new(writer),
+            gzip,
+        }
     }
 
-    pub fn write_record(&mut self, record: WarcRecord<Box<dyn Read>>) -> Result<(), Error> {
+    pub fn write_record<R: Read>(&mut self, record: WarcRecord<R>) -> Result<(), Error> {
         if self.gzip {
             GzipRecordWriter::new(&mut self.writer).write_record(record)
         } else {
@@ -27,11 +52,11 @@ impl<W: Write + Seek> WarcWriter<W> {
     }
 
     pub fn tell(&mut self) -> u64 {
-        self.writer.seek(SeekFrom::Current(0)).unwrap()
+        self.writer.count
     }
 
     pub fn into_inner(self) -> W {
-        self.writer
+        self.writer.inner
     }
 }
 
@@ -48,7 +73,7 @@ impl<W: Write> UncompressedRecordWriter<W> {
         Self { writer }
     }
 
-    pub fn write_record(&mut self, record: WarcRecord<Box<dyn Read>>) -> Result<(), Error> {
+    pub fn write_record<R: Read>(&mut self, record: WarcRecord<R>) -> Result<(), Error> {
         let (headers, body) = record.into_parts();
         self.writer.write_all(WARC_1_1)?;
         write_headers(&mut self.writer, headers)?;
@@ -64,7 +89,7 @@ impl<W: Write> GzipRecordWriter<W> {
         Self { writer }
     }
 
-    pub fn write_record(&mut self, record: WarcRecord<Box<dyn Read>>) -> Result<(), Error> {
+    pub fn write_record<R: Read>(&mut self, record: WarcRecord<R>) -> Result<(), Error> {
         let (headers, body) = record.into_parts();
         let mut w = GzEncoder::new(&mut self.writer, Compression::default());
         w.write_all(WARC_1_1)?;
