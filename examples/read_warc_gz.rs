@@ -1,6 +1,5 @@
-use flate2::read::MultiGzDecoder;
 use std::fs::OpenOptions;
-use std::io::BufReader;
+use std::io::BufRead;
 use std::str::from_utf8;
 use warcio::{LendingIterator as _, WarcReader, WarcRecordHeaderName};
 
@@ -9,7 +8,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .read(true)
         .open("example.warc.gz")
         .expect("\n  Error opening example.warc.gz for writing, does it exist?\n  Try running `cargo run --example write_warc_gz` first.\n");
-    let mut warc_reader = WarcReader::new(BufReader::new(MultiGzDecoder::new(f)));
+    let mut warc_reader = WarcReader::<Box<dyn BufRead>>::try_from(f)?;
     while let Some(record) = warc_reader.next()? {
         let mut content_type: Option<&[u8]> = None;
         let mut content_length: Option<&[u8]> = None;
@@ -34,5 +33,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             from_utf8(content_length.unwrap_or(b"<n/a>"))?
         );
     }
+
     Ok(())
 }

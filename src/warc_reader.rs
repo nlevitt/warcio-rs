@@ -1,6 +1,7 @@
 use crate::{WarcRecord, WarcRecordHeader, WarcRecordHeaderName, WarcVersion};
+use flate2::bufread::MultiGzDecoder;
 use httparse::Status;
-use std::io::{BufRead, ErrorKind, Read, Take};
+use std::io::{BufRead, BufReader, ErrorKind, Read, Take};
 use std::str::from_utf8;
 
 fn read_line<R: BufRead>(reader: &mut R) -> Result<Vec<u8>, std::io::Error> {
@@ -66,11 +67,27 @@ pub struct WarcReader<R: BufRead> {
 }
 
 impl<R: BufRead> WarcReader<R> {
-    pub fn new(reader: R) -> Self {
+    pub(crate) fn new(reader: R) -> Self {
         Self {
             reader: Some(reader),
             current_record: None,
         }
+    }
+}
+
+// Can't get this to work with `TryFrom`. Due to https://github.com/rust-lang/rust/issues/50133 ?
+// https://play.rust-lang.org/?version=stable&mode=debug&edition=2021&gist=80150b9cd43bafe31ede79d546bdb9f9
+impl WarcReader<Box<dyn BufRead>> {
+    pub fn try_from<R: Read + 'static>(reader: R) -> Result<Self, std::io::Error> {
+        let mut reader = BufReader::new(reader);
+        let peeked_bytes = &reader.fill_buf()?[0..2];
+        let boxed: Box<dyn BufRead> = if peeked_bytes == &b"\x1f\x8b"[..] {
+            Box::new(BufReader::new(MultiGzDecoder::new(reader)))
+        } else {
+            Box::new(reader)
+        };
+        let warc_reader: WarcReader<Box<dyn BufRead>> = WarcReader::new(boxed);
+        Ok(warc_reader)
     }
 }
 
@@ -185,7 +202,7 @@ mod tests {
     use flate2::read::MultiGzDecoder;
     use flate2::write::GzEncoder;
     use flate2::Compression;
-    use std::io::{BufReader, Cursor, Read, Seek, SeekFrom, Write};
+    use std::io::{BufRead, BufReader, Cursor, Read, Seek, SeekFrom, Write};
     use std::str::from_utf8;
 
     fn check_first_record<R: Read>(
@@ -315,6 +332,37 @@ mod tests {
         let record = warc_reader.next()?;
         check_second_record(record)?;
         assert!(warc_reader.next()?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_try_from_uncompressed() -> Result<(), Box<dyn std::error::Error>> {
+        let f = Cursor::new(Vec::from(WARC_RECORDS.concat()));
+        let mut warc_reader = WarcReader::<Box<dyn BufRead>>::try_from(f)?;
+        let record = warc_reader.next()?;
+        check_first_record(record)?;
+        let record = warc_reader.next()?;
+        check_second_record(record)?;
+        assert!(warc_reader.next()?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_try_from_gzipped() -> Result<(), Box<dyn std::error::Error>> {
+        let mut gz = GzEncoder::new(Vec::new(), Compression::default());
+        gz.write_all(&Vec::from(WARC_RECORDS.concat()))?;
+        let buf = gz.finish()?;
+
+        let mut f = Cursor::new(buf);
+        assert_eq!(f.fill_buf()?[..2], b"\x1f\x8b"[..]);
+
+        let mut warc_reader = WarcReader::<Box<dyn BufRead>>::try_from(f)?;
+        let record = warc_reader.next()?;
+        check_first_record(record)?;
+        let record = warc_reader.next()?;
+        check_second_record(record)?;
+        assert!(warc_reader.next()?.is_none());
+
         Ok(())
     }
 }
