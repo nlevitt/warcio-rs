@@ -12,7 +12,6 @@ fn main() -> Result<(), std::io::Error> {
     let mut warc_writer = WarcWriter::new(BufWriter::new(f), true);
 
     let payload = b"format: WARC File Format 1.1\r\n";
-    let body = &payload[..];
     let record: WarcRecord<&[u8]> = WarcRecord::builder()
         .generate_record_id()
         .warc_type(WarcRecordType::Warcinfo)
@@ -20,12 +19,11 @@ fn main() -> Result<(), std::io::Error> {
         .warc_filename(b"example.warc.gz")
         .content_type(b"text/plain")
         .content_length(payload.len())
-        .body(body)
+        .body(&payload[..])
         .build();
     warc_writer.write_record(record)?;
 
     let payload = b"howdy doody!";
-    let body = &payload[..];
     let record: WarcRecord<&[u8]> = WarcRecord::builder()
         .generate_record_id()
         .warc_type(WarcRecordType::Resource)
@@ -33,7 +31,7 @@ fn main() -> Result<(), std::io::Error> {
         .warc_filename(b"example.warc.gz")
         .content_type(b"text/plain")
         .content_length(payload.len())
-        .body(body)
+        .body(&payload[..])
         .build();
     warc_writer.write_record(record)?;
 
