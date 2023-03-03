@@ -31,25 +31,6 @@ impl<W: Write> Write for ByteCountingWriter<W> {
     }
 }
 
-/*
-#[derive(Debug)]
-pub(crate) struct RecordedUrl {
-    pub(crate) timestamp: DateTime<Utc>,
-
-    pub(crate) uri: String,
-    pub(crate) status: u16,
-    pub(crate) method: String,
-    pub(crate) mimetype: Option<String>,
-
-    pub(crate) request_line: Vec<u8>,
-    pub(crate) request_headers: Vec<u8>,
-    pub(crate) request_payload: Payload,
-    pub(crate) response_status_line: Vec<u8>,
-    pub(crate) response_headers: Vec<u8>,
-    pub(crate) response_payload: Payload,
-}
- */
-
 pub struct WarcRecordInfo {
     offset: u64,
     record_id: Vec<u8>,
@@ -213,13 +194,12 @@ mod tests {
         (record, record_str)
     }
 
-    /*
     #[test]
     fn test_write_record_uncompressed() {
-        let (record, record_str) = build_record();
+        let (mut record, record_str) = build_record();
         let buf = Cursor::new(Vec::<u8>::new());
         let mut w = WarcWriter::new(buf, false);
-        w.write_record(record).unwrap();
+        w.write_record(&mut record).unwrap();
         let buf = w.into_inner().into_inner();
         // print!("{}", from_utf8(&buf).unwrap());
         assert_eq!(from_utf8(&buf).unwrap(), record_str);
@@ -227,10 +207,10 @@ mod tests {
 
     #[test]
     fn test_write_record_gzip() {
-        let (record, expected) = build_record();
+        let (mut record, expected) = build_record();
         let buf = Cursor::new(Vec::<u8>::new());
         let mut w = WarcWriter::new(buf, true);
-        w.write_record(record).unwrap();
+        w.write_record(&mut record).unwrap();
         let mut gzipped_buf = w.into_inner();
         gzipped_buf.seek(SeekFrom::Start(0)).unwrap();
         let mut gunzipped_buf = Vec::<u8>::new();
@@ -240,5 +220,4 @@ mod tests {
         print!("{}", from_utf8(&gunzipped_buf).unwrap());
         assert_eq!(gunzipped_buf, expected.as_bytes());
     }
-     */
 }

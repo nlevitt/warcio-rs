@@ -302,9 +302,7 @@ impl<R: Read> WarcRecordPayload<Take<R>> {
                 }
                 Ok(bufread.into_inner().into_inner())
             }
-            Err(e) => {
-                Err(e)
-            }
+            Err(e) => Err(e),
         }
     }
 }
@@ -354,67 +352,12 @@ pub struct WarcRecordBuilder<R: Read> {
     record_id: Urn,
 }
 
-/*
-fn response_record(
-    uri: &String,
-    timestamp: DateTime<Utc>,
-    response_status: StatusCode,
-    response_version: Version,
-    response_headers: HeaderMap<HeaderValue>,
-    response_payload: Payload,
-) -> WarcRecord<Box<dyn Read>> {
-    let response_status_line_bytes = response_status_line_as_bytes(response_version, response_status);
-    let response_headers_bytes = response_headers.as_bytes();
-    let full_http_response_length: u64 = response_status_line_bytes.len() as u64
-        + response_headers_bytes.len() as u64
-        + 2
-        + response_payload.length as u64;
-    let full_http_response: Box<dyn Read> = Box::new(
-        Cursor::new(response_status_line_bytes)
-            .chain(Cursor::new(response_headers_bytes))
-            .chain(&b"\r\n"[..])
-            .chain(response_payload.payload),
-    );
-
-    let record = WarcRecord::builder()
-        .generate_record_id()
-        .warc_type(WarcRecordType::Response)
-        .warc_date(timestamp)
-        .warc_target_uri(uri.as_bytes())
-        // .warc_ip_address
-        .warc_payload_digest(format!("sha256:{:x}", &response_payload.sha256).as_bytes())
-        .content_type(b"application/http;msgtype=response")
-        .http_response_status(response_status)
-        .http_response_version(response_version)
-        .http_headers(response_headers_bytes)
-        .http_payload(response_payload)
-        .build();
-    record
-}
- */
-
 impl<R: Read> WarcRecordBuilder<R> {
     pub fn body(mut self, body: R) -> Self {
         self.payload = WarcRecordPayload::Raw(body);
         self
     }
 
-    /*
-    pub fn http_response_status(mut self, status: StatusCode) -> Self {
-        self.http_response_status = status;
-        self
-    }
-
-    pub fn http_response_version(mut self, version: Version) -> Self {
-        self.http_response_version = version;
-        self
-    }
-
-    pub fn http_headers(mut self, headers: HeaderMap<HeaderValue>) -> Self {
-        self.http_headers = headers;
-        self
-    }
-     */
     pub fn http_response(
         mut self,
         version: Version,
@@ -508,9 +451,8 @@ mod tests {
     use std::io::{empty, Read};
     use std::str::from_utf8;
 
-    /*
     #[test]
-    fn test_minimal_record() -> Result<(), Box<dyn Error>>{
+    fn test_minimal_record() -> Result<(), Box<dyn Error>> {
         let body: Box<dyn Read> = Box::new(empty());
         let record: WarcRecord<Box<dyn Read>> = WarcRecord::builder()
             .generate_record_id()
@@ -526,7 +468,7 @@ mod tests {
         assert!(
             re.is_match(&headers[0].value),
             "warc-record-id {} does not match regex {}",
-            from_utf8(&headers[0].value)?(),
+            from_utf8(&headers[0].value)?,
             re
         );
 
@@ -535,7 +477,6 @@ mod tests {
         assert_eq!(buf, b"");
         Ok(())
     }
-    */
 
     #[test]
     fn test_all_the_headers() {
