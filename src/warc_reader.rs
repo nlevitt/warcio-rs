@@ -96,16 +96,8 @@ impl<R: BufRead> LendingIterator for WarcReader<R> {
 
     fn next(&mut self) -> Result<Option<&mut WarcRecord<Take<R>>>, Box<dyn std::error::Error>> {
         let mut reader = if self.current_record.is_some() {
-            let (_, mut last_body) = self.current_record.take().unwrap().into_parts();
-            // XXX what happens if body is wrong length?
-            loop {
-                let n = last_body.fill_buf()?.len();
-                if n == 0 {
-                    break;
-                }
-                last_body.consume(n);
-            }
-            let mut reader = last_body.into_inner();
+            let (_, last_body) = self.current_record.take().unwrap().into_parts();
+            let mut reader = last_body.try_into_inner()?;
             read_line(&mut reader)?; // discard empty line
             read_line(&mut reader)?; // discard empty line
             reader
@@ -211,7 +203,7 @@ mod tests {
         assert!(record.is_some());
         let record = record.unwrap();
         let mut buf: Vec<u8> = Vec::new();
-        record.body.read_to_end(&mut buf)?;
+        record.payload.read_to_end(&mut buf)?;
         assert_eq!(
             from_utf8(&buf)?,
             concat!(
@@ -247,7 +239,7 @@ mod tests {
         assert!(record.is_some());
         let record = record.unwrap();
         let mut buf: Vec<u8> = Vec::new();
-        record.body.read_to_end(&mut buf)?;
+        record.payload.read_to_end(&mut buf)?;
         assert_eq!(
             from_utf8(&buf)?,
             concat!(

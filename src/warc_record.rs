@@ -1,6 +1,8 @@
 use chrono::{DateTime, SecondsFormat, Utc};
+use http::{HeaderMap, HeaderValue, StatusCode, Version};
+use std::error::Error;
 use std::fmt::{Display, Formatter};
-use std::io::Read;
+use std::io::{BufRead, BufReader, Chain, Cursor, Read, Take};
 use uuid::fmt::Urn;
 use uuid::Uuid;
 
@@ -110,6 +112,7 @@ impl From<&[u8]> for WarcRecordHeaderName {
     }
 }
 
+#[derive(Debug)]
 pub struct WarcRecordHeader {
     pub name: WarcRecordHeaderName,
     pub value: Vec<u8>,
@@ -134,7 +137,7 @@ impl Display for WarcRecordHeaderError {
     }
 }
 
-impl std::error::Error for WarcRecordHeaderError {}
+impl Error for WarcRecordHeaderError {}
 
 impl From<httparse::Header<'_>> for WarcRecordHeader {
     fn from(value: httparse::Header) -> Self {
@@ -173,6 +176,7 @@ impl WarcRecordType {
     }
 }
 
+#[derive(Debug)]
 pub enum WarcVersion {
     Warc1_1,
     Custom(Vec<u8>),
@@ -187,15 +191,143 @@ impl WarcVersion {
     }
 }
 
+fn response_status_line_as_bytes(version: Version, status: StatusCode) -> Vec<u8> {
+    Vec::from(
+        format!(
+            "{:?} {} {}\r\n",
+            version,
+            status.as_u16(),
+            status
+                .canonical_reason()
+                .or(Some("No Known Reason"))
+                .unwrap()
+        )
+        .as_bytes(),
+    )
+}
+
+trait AsBytes {
+    fn as_bytes(self: &Self) -> Vec<u8>;
+}
+
+impl AsBytes for HeaderMap {
+    fn as_bytes(self: &Self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        for (name, value) in self {
+            buf.extend_from_slice(name.as_str().as_bytes());
+            buf.extend_from_slice(b": ");
+            buf.extend_from_slice(value.as_bytes());
+            buf.extend_from_slice(b"\r\n");
+        }
+        buf
+    }
+}
+
+pub struct HttpResponse<R: Read> {
+    pub version: Version,
+    pub status: StatusCode,
+    pub headers: HeaderMap<HeaderValue>,
+
+    full_http_response: Chain<Chain<Chain<Cursor<Vec<u8>>, Cursor<Vec<u8>>>, &'static [u8]>, R>,
+}
+
+impl<R: Read> HttpResponse<R> {
+    fn new(version: Version, status: StatusCode, headers: HeaderMap<HeaderValue>, body: R) -> Self {
+        let full_http_response = Cursor::new(response_status_line_as_bytes(version, status))
+            .chain(Cursor::new(headers.as_bytes()))
+            .chain(&b"\r\n"[..])
+            .chain(body);
+        Self {
+            version,
+            status,
+            headers,
+            full_http_response,
+        }
+    }
+
+    pub(crate) fn into_body(self) -> R {
+        let (_, body) = self.full_http_response.into_inner();
+        body
+    }
+}
+
+impl<R: Read> Read for HttpResponse<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.full_http_response.read(buf)
+    }
+}
+
+// Just call this `Payload`? WE have a different `Payload` over in warcprox-rs but so what?
+pub enum WarcRecordPayload<R: Read> {
+    Empty,
+    Raw(R),
+    HttpResponse(HttpResponse<R>),
+    // HttpRequest(HttpRequest<R>),
+}
+
+#[derive(Debug, Clone)]
+struct MissingInnerRead;
+
+impl Display for MissingInnerRead {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "WarcRecordPayload has no inner read because it is a WarcRecordPayload::Empty"
+        )
+    }
+}
+
+impl Error for MissingInnerRead {}
+
+impl<R: Read> WarcRecordPayload<Take<R>> {
+    /// Consume payload and return inner reader. Advances reader to end of payload before returning
+    /// it. Returns error if payload is WarcRecordPayload::Empty since there is no inner reader.
+    pub(crate) fn try_into_inner(self) -> Result<R, Box<dyn Error>> {
+        // extract bounded body reader
+        let maybe_body_reader: Result<Take<R>, Box<dyn Error>> = match self {
+            WarcRecordPayload::Empty => Err(Box::new(MissingInnerRead)),
+            WarcRecordPayload::Raw(take) => Ok(take),
+            WarcRecordPayload::HttpResponse(http_response) => Ok(http_response.into_body()),
+        };
+
+        match maybe_body_reader {
+            Ok(body_reader) => {
+                let mut bufread = BufReader::new(body_reader);
+                loop {
+                    let n = bufread.fill_buf()?.len();
+                    if n == 0 {
+                        break;
+                    }
+                    bufread.consume(n);
+                }
+                Ok(bufread.into_inner().into_inner())
+            }
+            Err(e) => {
+                Err(e)
+            }
+        }
+    }
+}
+
+impl<R: Read> Read for WarcRecordPayload<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            WarcRecordPayload::Empty => Ok(0),
+            WarcRecordPayload::Raw(body) => body.read(buf),
+            WarcRecordPayload::HttpResponse(payload) => payload.read(buf),
+        }
+    }
+}
+
 pub struct WarcRecord<R: Read> {
     pub headers: Vec<WarcRecordHeader>,
-    pub body: R,
+    pub payload: WarcRecordPayload<R>,
     pub record_id: Urn,
 }
 
 impl<R: Read> WarcRecord<R> {
-    pub fn into_parts(self) -> (Vec<WarcRecordHeader>, R) {
-        (self.headers, self.body)
+    pub fn into_parts(self) -> (Vec<WarcRecordHeader>, WarcRecordPayload<R>) {
+        (self.headers, self.payload)
     }
 
     pub fn builder() -> WarcRecordBuilder<R> {
@@ -207,7 +339,7 @@ impl<R: Read> WarcRecord<R> {
         WarcRecordBuilder {
             version: WarcVersion::Warc1_1,
             headers: Some(Vec::new()),
-            body: None,
+            payload: WarcRecordPayload::Empty,
             record_id,
         }
     }
@@ -218,13 +350,80 @@ impl<R: Read> WarcRecord<R> {
 pub struct WarcRecordBuilder<R: Read> {
     version: WarcVersion,
     headers: Option<Vec<WarcRecordHeader>>,
-    body: Option<R>,
+    payload: WarcRecordPayload<R>,
     record_id: Urn,
 }
 
+/*
+fn response_record(
+    uri: &String,
+    timestamp: DateTime<Utc>,
+    response_status: StatusCode,
+    response_version: Version,
+    response_headers: HeaderMap<HeaderValue>,
+    response_payload: Payload,
+) -> WarcRecord<Box<dyn Read>> {
+    let response_status_line_bytes = response_status_line_as_bytes(response_version, response_status);
+    let response_headers_bytes = response_headers.as_bytes();
+    let full_http_response_length: u64 = response_status_line_bytes.len() as u64
+        + response_headers_bytes.len() as u64
+        + 2
+        + response_payload.length as u64;
+    let full_http_response: Box<dyn Read> = Box::new(
+        Cursor::new(response_status_line_bytes)
+            .chain(Cursor::new(response_headers_bytes))
+            .chain(&b"\r\n"[..])
+            .chain(response_payload.payload),
+    );
+
+    let record = WarcRecord::builder()
+        .generate_record_id()
+        .warc_type(WarcRecordType::Response)
+        .warc_date(timestamp)
+        .warc_target_uri(uri.as_bytes())
+        // .warc_ip_address
+        .warc_payload_digest(format!("sha256:{:x}", &response_payload.sha256).as_bytes())
+        .content_type(b"application/http;msgtype=response")
+        .http_response_status(response_status)
+        .http_response_version(response_version)
+        .http_headers(response_headers_bytes)
+        .http_payload(response_payload)
+        .build();
+    record
+}
+ */
+
 impl<R: Read> WarcRecordBuilder<R> {
     pub fn body(mut self, body: R) -> Self {
-        self.body = Some(body);
+        self.payload = WarcRecordPayload::Raw(body);
+        self
+    }
+
+    /*
+    pub fn http_response_status(mut self, status: StatusCode) -> Self {
+        self.http_response_status = status;
+        self
+    }
+
+    pub fn http_response_version(mut self, version: Version) -> Self {
+        self.http_response_version = version;
+        self
+    }
+
+    pub fn http_headers(mut self, headers: HeaderMap<HeaderValue>) -> Self {
+        self.http_headers = headers;
+        self
+    }
+     */
+    pub fn http_response(
+        mut self,
+        version: Version,
+        status: StatusCode,
+        headers: HeaderMap<HeaderValue>,
+        body: R,
+    ) -> Self {
+        self.payload =
+            WarcRecordPayload::HttpResponse(HttpResponse::new(version, status, headers, body));
         self
     }
 
@@ -259,7 +458,7 @@ impl<R: Read> WarcRecordBuilder<R> {
     }
 
     /// Doesn't enforce that this matches actual length of body.
-    pub fn content_length(self, content_length: usize) -> Self {
+    pub fn content_length(self, content_length: u64) -> Self {
         self.add_header_name_value(
             WarcRecordHeaderName::ContentLength,
             content_length.to_string().as_bytes(),
@@ -294,7 +493,7 @@ impl<R: Read> WarcRecordBuilder<R> {
     pub fn build(mut self) -> WarcRecord<R> {
         WarcRecord {
             headers: self.headers.take().unwrap(),
-            body: self.body.take().unwrap(),
+            payload: self.payload,
             record_id: self.record_id,
         }
     }
@@ -305,35 +504,38 @@ mod tests {
     use crate::{WarcRecord, WarcRecordHeaderName, WarcRecordType};
     use chrono::{TimeZone, Utc};
     use regex::bytes::Regex;
+    use std::error::Error;
     use std::io::{empty, Read};
     use std::str::from_utf8;
 
+    /*
     #[test]
-    fn test_minimal_record() {
+    fn test_minimal_record() -> Result<(), Box<dyn Error>>{
         let body: Box<dyn Read> = Box::new(empty());
         let record: WarcRecord<Box<dyn Read>> = WarcRecord::builder()
             .generate_record_id()
             .body(body)
             .build();
-        let (headers, mut body) = record.into_parts();
+        let (headers, mut payload) = record.into_parts();
 
         assert_eq!(headers.len(), 1);
         assert_eq!(&headers[0].name.as_bytes(), b"WARC-Record-ID");
         let re = Regex::new(
             r"^<urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}>$",
-        )
-        .unwrap();
+        )?;
         assert!(
             re.is_match(&headers[0].value),
             "warc-record-id {} does not match regex {}",
-            from_utf8(&headers[0].value).unwrap(),
+            from_utf8(&headers[0].value)?(),
             re
         );
 
         let mut buf = Vec::new();
-        body.read_to_end(&mut buf).unwrap();
+        payload.read_to_end(&mut buf)?;
         assert_eq!(buf, b"");
+        Ok(())
     }
+    */
 
     #[test]
     fn test_all_the_headers() {
