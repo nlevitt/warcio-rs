@@ -1,5 +1,5 @@
 use chrono::{DateTime, SecondsFormat, Utc};
-use http::{HeaderMap, HeaderValue, StatusCode, Version};
+use http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, Version};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::io::{BufRead, BufReader, Chain, Cursor, Read, Take};
@@ -206,6 +206,18 @@ fn response_status_line_as_bytes(version: Version, status: StatusCode) -> Vec<u8
     )
 }
 
+fn request_line_as_bytes(method: &Method, uri: &Uri, version: Version) -> Vec<u8> {
+    Vec::from(
+        format!(
+            "{} {} {:?}\r\n",
+            method,
+            uri.path_and_query().unwrap(),
+            version
+        )
+        .as_bytes(),
+    )
+}
+
 trait AsBytes {
     fn as_bytes(self: &Self) -> Vec<u8>;
 }
@@ -227,20 +239,34 @@ pub struct HttpResponse<R: Read> {
     pub version: Version,
     pub status: StatusCode,
     pub headers: HeaderMap<HeaderValue>,
+    pub length: u64,
 
     full_http_response: Chain<Chain<Chain<Cursor<Vec<u8>>, Cursor<Vec<u8>>>, &'static [u8]>, R>,
 }
 
 impl<R: Read> HttpResponse<R> {
-    fn new(version: Version, status: StatusCode, headers: HeaderMap<HeaderValue>, body: R) -> Self {
-        let full_http_response = Cursor::new(response_status_line_as_bytes(version, status))
-            .chain(Cursor::new(headers.as_bytes()))
+    pub fn new(
+        version: Version,
+        status: StatusCode,
+        headers: HeaderMap<HeaderValue>,
+        body_content_length: u64,
+        body: R,
+    ) -> Self {
+        let response_status_line_bytes = response_status_line_as_bytes(version, status);
+        let headers_bytes = headers.as_bytes();
+        let length = response_status_line_bytes.len() as u64
+            + headers_bytes.len() as u64
+            + 2
+            + body_content_length;
+        let full_http_response = Cursor::new(response_status_line_bytes)
+            .chain(Cursor::new(headers_bytes))
             .chain(&b"\r\n"[..])
             .chain(body);
         Self {
             version,
             status,
             headers,
+            length,
             full_http_response,
         }
     }
@@ -257,12 +283,59 @@ impl<R: Read> Read for HttpResponse<R> {
     }
 }
 
-// Just call this `Payload`? WE have a different `Payload` over in warcprox-rs but so what?
+pub struct HttpRequest<R: Read> {
+    pub method: Method,
+    pub version: Version,
+    pub headers: HeaderMap<HeaderValue>,
+    pub length: u64,
+
+    full_http_request: Chain<Chain<Chain<Cursor<Vec<u8>>, Cursor<Vec<u8>>>, &'static [u8]>, R>,
+}
+
+impl<R: Read> HttpRequest<R> {
+    pub fn new(
+        method: Method,
+        uri: &Uri,
+        version: Version,
+        headers: HeaderMap<HeaderValue>,
+        body_content_length: u64,
+        body: R,
+    ) -> Self {
+        let request_line_bytes = request_line_as_bytes(&method, uri, version);
+        let headers_bytes = headers.as_bytes();
+        let length =
+            request_line_bytes.len() as u64 + headers_bytes.len() as u64 + 2 + body_content_length;
+        let full_http_request = Cursor::new(request_line_bytes)
+            .chain(Cursor::new(headers_bytes))
+            .chain(&b"\r\n"[..])
+            .chain(body);
+        Self {
+            method,
+            version,
+            headers,
+            length,
+            full_http_request,
+        }
+    }
+
+    pub(crate) fn into_body(self) -> R {
+        let (_, body) = self.full_http_request.into_inner();
+        body
+    }
+}
+
+impl<R: Read> Read for HttpRequest<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.full_http_request.read(buf)
+    }
+}
+
+// Just call this `Payload`? We have a different `Payload` over in warcprox-rs but so what?
 pub enum WarcRecordPayload<R: Read> {
     Empty,
     Raw(R),
     HttpResponse(HttpResponse<R>),
-    // HttpRequest(HttpRequest<R>),
+    HttpRequest(HttpRequest<R>),
 }
 
 #[derive(Debug, Clone)]
@@ -288,6 +361,7 @@ impl<R: Read> WarcRecordPayload<Take<R>> {
             WarcRecordPayload::Empty => Err(Box::new(MissingInnerRead)),
             WarcRecordPayload::Raw(take) => Ok(take),
             WarcRecordPayload::HttpResponse(http_response) => Ok(http_response.into_body()),
+            WarcRecordPayload::HttpRequest(http_request) => Ok(http_request.into_body()),
         };
 
         match maybe_body_reader {
@@ -313,6 +387,7 @@ impl<R: Read> Read for WarcRecordPayload<R> {
             WarcRecordPayload::Empty => Ok(0),
             WarcRecordPayload::Raw(body) => body.read(buf),
             WarcRecordPayload::HttpResponse(payload) => payload.read(buf),
+            WarcRecordPayload::HttpRequest(payload) => payload.read(buf),
         }
     }
 }
@@ -358,15 +433,8 @@ impl<R: Read> WarcRecordBuilder<R> {
         self
     }
 
-    pub fn http_response(
-        mut self,
-        version: Version,
-        status: StatusCode,
-        headers: HeaderMap<HeaderValue>,
-        body: R,
-    ) -> Self {
-        self.payload =
-            WarcRecordPayload::HttpResponse(HttpResponse::new(version, status, headers, body));
+    pub fn payload(mut self, payload: WarcRecordPayload<R>) -> Self {
+        self.payload = payload;
         self
     }
 
