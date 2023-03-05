@@ -1,5 +1,4 @@
-use crate::{WarcRecord, WarcRecordHeader, WarcRecordType};
-use chrono::{DateTime, Utc};
+use crate::{WarcRecord, WarcRecordHeader, WarcRecordInfo, WarcRecordLocation};
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use std::io::{Error, Read, Write};
@@ -31,23 +30,8 @@ impl<W: Write> Write for ByteCountingWriter<W> {
     }
 }
 
-pub struct WarcRecordInfo {
-    offset: u64,
-    record_id: Vec<u8>,
-    warc_type: WarcRecordType,
-    content_length: u64,
-    warc_date: DateTime<Utc>,
-    warc_target_uri: Vec<u8>,
-    warc_payload_digest: Vec<u8>,
-    warc_filename: Vec<u8>,
-
-    status: u16,
-    method: String,
-    mimetype: Option<String>,
-}
-
 pub trait WarcRecordWrite {
-    fn write_record<R: Read>(&mut self, record: &mut WarcRecord<R>) -> Result<(), Error>;
+    fn write_record<R: Read>(&mut self, record: WarcRecord<R>) -> Result<WarcRecordInfo, Error>;
 }
 
 pub struct WarcWriter<W: Write> {
@@ -73,12 +57,24 @@ impl<W: Write> WarcWriter<W> {
 }
 
 impl<W: Write> WarcRecordWrite for WarcWriter<W> {
-    fn write_record<R: Read>(&mut self, record: &mut WarcRecord<R>) -> Result<(), Error> {
+    fn write_record<R: Read>(
+        &mut self,
+        mut record: WarcRecord<R>,
+    ) -> Result<WarcRecordInfo, Error> {
+        let offset = self.writer.count;
         if self.gzip {
-            GzipRecordWriter::new(&mut self.writer).write_record(record)
+            GzipRecordWriter::new(&mut self.writer).write_record(&mut record)?;
         } else {
-            UncompressedRecordWriter::new(&mut self.writer).write_record(record)
-        }
+            UncompressedRecordWriter::new(&mut self.writer).write_record(&mut record)?;
+        };
+        Ok(WarcRecordInfo {
+            warc_record_metadata: record.warc_record_metadata,
+            http_metadata: record.http_metadata,
+            warc_record_location: WarcRecordLocation {
+                warc_filename: vec![],
+                offset,
+            },
+        })
     }
 }
 
@@ -94,11 +90,8 @@ impl<W: Write> UncompressedRecordWriter<W> {
     fn new(writer: W) -> Self {
         Self { writer }
     }
-}
 
-impl<W: Write> WarcRecordWrite for UncompressedRecordWriter<W> {
     fn write_record<R: Read>(&mut self, record: &mut WarcRecord<R>) -> Result<(), Error> {
-        // let (headers, body) = record.into_parts();
         self.writer.write_all(WARC_1_1)?;
         write_headers(&mut self.writer, &record.headers)?;
         self.writer.write_all(CRLF)?;
@@ -112,9 +105,7 @@ impl<W: Write> GzipRecordWriter<W> {
     fn new(writer: W) -> Self {
         Self { writer }
     }
-}
 
-impl<W: Write> WarcRecordWrite for GzipRecordWriter<W> {
     fn write_record<R: Read>(&mut self, record: &mut WarcRecord<R>) -> Result<(), Error> {
         let mut w = GzEncoder::new(&mut self.writer, Compression::default());
         w.write_all(WARC_1_1)?;
@@ -189,17 +180,17 @@ mod tests {
             "\r\n",
             "I'm the body",
             "\r\n\r\n"),
-            record.record_id,
+            from_utf8(record.warc_record_metadata.record_id.as_ref().unwrap()).unwrap()
         );
         (record, record_str)
     }
 
     #[test]
     fn test_write_record_uncompressed() {
-        let (mut record, record_str) = build_record();
+        let (record, record_str) = build_record();
         let buf = Cursor::new(Vec::<u8>::new());
         let mut w = WarcWriter::new(buf, false);
-        w.write_record(&mut record).unwrap();
+        w.write_record(record).unwrap();
         let buf = w.into_inner().into_inner();
         // print!("{}", from_utf8(&buf).unwrap());
         assert_eq!(from_utf8(&buf).unwrap(), record_str);
@@ -207,10 +198,10 @@ mod tests {
 
     #[test]
     fn test_write_record_gzip() {
-        let (mut record, expected) = build_record();
+        let (record, expected) = build_record();
         let buf = Cursor::new(Vec::<u8>::new());
         let mut w = WarcWriter::new(buf, true);
-        w.write_record(&mut record).unwrap();
+        w.write_record(record).unwrap();
         let mut gzipped_buf = w.into_inner();
         gzipped_buf.seek(SeekFrom::Start(0)).unwrap();
         let mut gunzipped_buf = Vec::<u8>::new();

@@ -3,7 +3,6 @@ use http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, Version};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::io::{BufRead, BufReader, Chain, Cursor, Read, Take};
-use uuid::fmt::Urn;
 use uuid::Uuid;
 
 // https://iipc.github.io/warc-specifications/specifications/warc-format/warc-1.1/#named-fields
@@ -392,10 +391,39 @@ impl<R: Read> Read for WarcRecordPayload<R> {
     }
 }
 
+pub struct WarcRecordMetadata {
+    pub version: WarcVersion,
+    pub record_id: Option<Vec<u8>>,
+    pub warc_type: Option<WarcRecordType>,
+    pub content_length: Option<u64>,
+    pub warc_date: Option<DateTime<Utc>>,
+    pub warc_target_uri: Option<Vec<u8>>,
+    pub warc_payload_digest: Option<Vec<u8>>,
+}
+
+pub struct HttpMetadata {
+    pub status: Option<StatusCode>,
+    pub method: Option<Method>,   // todo: avoid copy
+    pub mimetype: Option<String>, // todo: avoid copy
+    pub content_length: Option<u64>,
+}
+
+pub struct WarcRecordLocation {
+    pub warc_filename: Vec<u8>,
+    pub offset: u64,
+}
+
 pub struct WarcRecord<R: Read> {
     pub headers: Vec<WarcRecordHeader>,
     pub payload: WarcRecordPayload<R>,
-    pub record_id: Urn,
+    pub warc_record_metadata: WarcRecordMetadata,
+    pub http_metadata: HttpMetadata,
+}
+
+pub struct WarcRecordInfo {
+    pub warc_record_location: WarcRecordLocation,
+    pub warc_record_metadata: WarcRecordMetadata,
+    pub http_metadata: HttpMetadata,
 }
 
 impl<R: Read> WarcRecord<R> {
@@ -404,27 +432,37 @@ impl<R: Read> WarcRecord<R> {
     }
 
     pub fn builder() -> WarcRecordBuilder<R> {
-        // This record id is a placeholder so that `WarcRecord::record_id` doesn't have to be an
-        // `Option`. Slyly named `WarcRecordBuilder::generate_record_id()` adds the
-        // WARC-Record-ID header using the already computed value. `record_id()` can be used to
-        // set the record ID to an arbitrary value.
-        let record_id = Uuid::new_v4().urn();
         WarcRecordBuilder {
-            version: WarcVersion::Warc1_1,
-            headers: Some(Vec::new()),
+            warc_record_metadata: WarcRecordMetadata {
+                version: WarcVersion::Warc1_1,
+                record_id: None,
+                warc_type: None,
+                content_length: None,
+                warc_date: None,
+                warc_target_uri: None,
+                warc_payload_digest: None,
+            },
+            http_metadata: HttpMetadata {
+                status: None,
+                method: None,
+                mimetype: None,
+                content_length: None,
+            },
             payload: WarcRecordPayload::Empty,
-            record_id,
+            headers: Vec::new(),
         }
     }
 }
 
+/// Struct returned by `WarcRecord::builder()`.
+///
 /// Doesn't block duplicate headers, though the standard disallows this, except for
 /// warc-concurrent-to.
 pub struct WarcRecordBuilder<R: Read> {
-    version: WarcVersion,
-    headers: Option<Vec<WarcRecordHeader>>,
-    payload: WarcRecordPayload<R>,
-    record_id: Urn,
+    pub headers: Vec<WarcRecordHeader>,
+    pub payload: WarcRecordPayload<R>,
+    pub warc_record_metadata: WarcRecordMetadata,
+    pub http_metadata: HttpMetadata,
 }
 
 impl<R: Read> WarcRecordBuilder<R> {
@@ -434,17 +472,49 @@ impl<R: Read> WarcRecordBuilder<R> {
     }
 
     pub fn payload(mut self, payload: WarcRecordPayload<R>) -> Self {
+        // extract metadata if there is any
+        match &payload {
+            WarcRecordPayload::HttpResponse(http_response) => {
+                self.http_metadata.status = Some(http_response.status);
+                if let Some(content_type) = http_response.headers.get("content-type") {
+                    if let Ok(content_type) = content_type.to_str() {
+                        // todo: avoid copy
+                        if let Some(semicolon_offset) = content_type.find(';') {
+                            self.http_metadata.mimetype =
+                                Some(String::from(&content_type[..semicolon_offset]));
+                        } else {
+                            self.http_metadata.mimetype = Some(String::from(content_type));
+                        }
+                    }
+                }
+                if let Some(content_length_header_value) =
+                    http_response.headers.get("content-length")
+                {
+                    if let Ok(content_length_str) = content_length_header_value.to_str() {
+                        if let Ok(content_length) = content_length_str.parse() {
+                            self.http_metadata.content_length = Some(content_length);
+                        }
+                    }
+                }
+            }
+            WarcRecordPayload::HttpRequest(http_request) => {
+                self.http_metadata.method = Some(http_request.method.clone()); // todo: avoid copy
+            }
+            _ => {}
+        };
+
         self.payload = payload;
+
         self
     }
 
     pub fn version(mut self, version: WarcVersion) -> Self {
-        self.version = version;
+        self.warc_record_metadata.version = version;
         self
     }
 
     pub fn add_header(mut self, header: WarcRecordHeader) -> Self {
-        self.headers.as_mut().unwrap().push(header);
+        self.headers.push(header);
         self
     }
 
@@ -455,28 +525,41 @@ impl<R: Read> WarcRecordBuilder<R> {
         })
     }
 
-    pub fn generate_record_id(self) -> Self {
-        let value = &format!("<{}>", self.record_id).into_bytes();
-        self.add_header_name_value(WarcRecordHeaderName::WARCRecordID, value)
+    pub fn generate_record_id(mut self) -> Self {
+        // todo: use a slice to avoid keeping two copies
+        let record_id = Uuid::new_v4().urn();
+        self.warc_record_metadata.record_id = Some(record_id.to_string().into());
+        self.add_header_name_value(
+            WarcRecordHeaderName::WARCRecordID,
+            &format!("<{}>", record_id).into_bytes(),
+        )
     }
 
     pub fn record_id(self, record_id: &[u8]) -> Self {
+        // todo: populate self.warc_record_metadata.record_id
         self.add_header_name_value(WarcRecordHeaderName::WARCRecordID, record_id)
     }
 
-    pub fn warc_type(self, warc_type: WarcRecordType) -> Self {
-        self.add_header_name_value(WarcRecordHeaderName::WARCType, warc_type.as_bytes())
+    pub fn warc_type(mut self, warc_type: WarcRecordType) -> Self {
+        let warc_type_bytes_vec = Vec::from(warc_type.as_bytes());
+        self.warc_record_metadata.warc_type = Some(warc_type);
+        self.add_header(WarcRecordHeader {
+            name: WarcRecordHeaderName::WARCType,
+            value: warc_type_bytes_vec,
+        })
     }
 
     /// Doesn't enforce that this matches actual length of body.
-    pub fn content_length(self, content_length: u64) -> Self {
+    pub fn content_length(mut self, content_length: u64) -> Self {
+        self.http_metadata.content_length = Some(content_length);
         self.add_header_name_value(
             WarcRecordHeaderName::ContentLength,
             content_length.to_string().as_bytes(),
         )
     }
 
-    pub fn warc_date(self, warc_date: DateTime<Utc>) -> Self {
+    pub fn warc_date(mut self, warc_date: DateTime<Utc>) -> Self {
+        self.warc_record_metadata.warc_date = Some(warc_date);
         self.add_header_name_value(
             WarcRecordHeaderName::WARCDate,
             warc_date
@@ -493,19 +576,22 @@ impl<R: Read> WarcRecordBuilder<R> {
         self.add_header_name_value(WarcRecordHeaderName::WARCFilename, filename)
     }
 
-    pub fn warc_target_uri(self, uri: &[u8]) -> Self {
+    pub fn warc_target_uri(mut self, uri: &[u8]) -> Self {
+        self.warc_record_metadata.warc_target_uri = Some(Vec::from(uri));
         self.add_header_name_value(WarcRecordHeaderName::WARCTargetURI, uri)
     }
 
-    pub fn warc_payload_digest(self, digest: &[u8]) -> Self {
+    pub fn warc_payload_digest(mut self, digest: &[u8]) -> Self {
+        self.warc_record_metadata.warc_payload_digest = Some(Vec::from(digest));
         self.add_header_name_value(WarcRecordHeaderName::WARCPayloadDigest, digest)
     }
 
-    pub fn build(mut self) -> WarcRecord<R> {
+    pub fn build(self) -> WarcRecord<R> {
         WarcRecord {
-            headers: self.headers.take().unwrap(),
+            headers: self.headers,
             payload: self.payload,
-            record_id: self.record_id,
+            warc_record_metadata: self.warc_record_metadata,
+            http_metadata: self.http_metadata,
         }
     }
 }
