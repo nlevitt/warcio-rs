@@ -1,7 +1,7 @@
 use chrono::Utc;
 use std::fs::OpenOptions;
 use std::io::BufWriter;
-use warcio::{WarcRecord, WarcRecordType, WarcWriter};
+use warcio::{WarcRecord, WarcRecordType, WarcRecordWrite as _, WarcWriter};
 
 fn main() -> Result<(), std::io::Error> {
     let f = OpenOptions::new()
@@ -18,10 +18,10 @@ fn main() -> Result<(), std::io::Error> {
         .warc_date(Utc::now())
         .warc_filename(b"example.warc.gz")
         .content_type(b"text/plain")
-        .content_length(payload.len())
+        .content_length(payload.len() as u64)
         .body(&payload[..])
         .build();
-    warc_writer.write_record(record)?;
+    warc_writer.write_record(record, Some(&Vec::<u8>::from("example.warc.gz")))?;
 
     let payload = b"howdy doody!";
     let record: WarcRecord<&[u8]> = WarcRecord::builder()
@@ -30,10 +30,10 @@ fn main() -> Result<(), std::io::Error> {
         .warc_date(Utc::now())
         .warc_filename(b"example.warc.gz")
         .content_type(b"text/plain")
-        .content_length(payload.len())
+        .content_length(payload.len() as u64)
         .body(&payload[..])
         .build();
-    warc_writer.write_record(record)?;
+    warc_writer.write_record(record, Some(&Vec::<u8>::from("example.warc.gz")))?;
 
     println!("wrote 2 warc records to example.warc.gz");
 

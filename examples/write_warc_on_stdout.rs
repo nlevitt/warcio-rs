@@ -1,6 +1,6 @@
 use chrono::Utc;
 use std::io::{stdout, BufWriter};
-use warcio::{WarcRecord, WarcRecordType, WarcWriter};
+use warcio::{WarcRecord, WarcRecordType, WarcRecordWrite as _, WarcWriter};
 
 fn main() -> Result<(), std::io::Error> {
     let mut warc_writer = WarcWriter::new(BufWriter::new(stdout()), false);
@@ -12,10 +12,10 @@ fn main() -> Result<(), std::io::Error> {
         .warc_type(WarcRecordType::Warcinfo)
         .warc_date(Utc::now())
         .content_type(b"text/plain")
-        .content_length(payload.len())
+        .content_length(payload.len() as u64)
         .body(body)
         .build();
-    warc_writer.write_record(record)?;
+    warc_writer.write_record(record, None)?;
 
     let payload = b"howdy doody!";
     let body = &payload[..];
@@ -24,10 +24,10 @@ fn main() -> Result<(), std::io::Error> {
         .warc_type(WarcRecordType::Resource)
         .warc_date(Utc::now())
         .content_type(b"text/plain")
-        .content_length(payload.len())
+        .content_length(payload.len() as u64)
         .body(body)
         .build();
-    warc_writer.write_record(record)?;
+    warc_writer.write_record(record, None)?;
 
     Ok(())
 }

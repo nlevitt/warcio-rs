@@ -11,6 +11,7 @@ uuid = { version = "1.2.2", features = ["v4"] }
 chrono = "0.4.23"
 flate2 = "1.0.25"
 httparse = "1.8.0"
+http = "0.2.9"
 
 [dev-dependencies]
 regex = "1.7.1"

@@ -34,7 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let mut buf: [u8; 20] = [0; 20];
-        let n = record.body.read(&mut buf)?;
+        let n = record.payload.read(&mut buf)?;
 
         println!(
             "content_type={:?} start of body: {:?}",
@@ -53,7 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 use chrono::Utc;
 use std::fs::File;
 use std::io::BufWriter;
-use warcio::{WarcRecord, WarcRecordType, WarcWriter};
+use warcio::{WarcRecord, WarcRecordType, WarcRecordWrite as _, WarcWriter};
 
 fn main() -> Result<(), std::io::Error> {
     let f = File::create("example.warc.gz")?;

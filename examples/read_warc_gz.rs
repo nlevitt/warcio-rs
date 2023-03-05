@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let mut buf: [u8; 20] = [0; 20];
-        let n = record.body.read(&mut buf)?;
+        let n = record.payload.read(&mut buf)?;
 
         println!(
             "warc_date={:?} warc_type={:?} content_type={:?} content_length={:?} start of body: {:?}",
