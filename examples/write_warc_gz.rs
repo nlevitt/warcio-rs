@@ -21,7 +21,7 @@ fn main() -> Result<(), std::io::Error> {
         .content_length(payload.len() as u64)
         .body(&payload[..])
         .build();
-    warc_writer.write_record(record)?;
+    warc_writer.write_record(record, Some(&Vec::<u8>::from("example.warc.gz")))?;
 
     let payload = b"howdy doody!";
     let record: WarcRecord<&[u8]> = WarcRecord::builder()
@@ -33,7 +33,7 @@ fn main() -> Result<(), std::io::Error> {
         .content_length(payload.len() as u64)
         .body(&payload[..])
         .build();
-    warc_writer.write_record(record)?;
+    warc_writer.write_record(record, Some(&Vec::<u8>::from("example.warc.gz")))?;
 
     println!("wrote 2 warc records to example.warc.gz");
 

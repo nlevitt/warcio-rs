@@ -409,7 +409,7 @@ pub struct HttpMetadata {
 }
 
 pub struct WarcRecordLocation {
-    pub warc_filename: Vec<u8>,
+    pub warc_filename: Option<Vec<u8>>,
     pub offset: u64,
 }
 
@@ -468,6 +468,13 @@ pub struct WarcRecordBuilder<R: Read> {
 impl<R: Read> WarcRecordBuilder<R> {
     pub fn body(mut self, body: R) -> Self {
         self.payload = WarcRecordPayload::Raw(body);
+        self
+    }
+
+    /// Set http method in metadata. This method exists just so the response record can hold
+    /// metadata about the http method, even though that info really lives on the request record.
+    pub fn method_metadata(mut self, method: Method) -> Self {
+        self.http_metadata.method = Some(method);
         self
     }
 

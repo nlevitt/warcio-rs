@@ -15,7 +15,7 @@ fn main() -> Result<(), std::io::Error> {
         .content_length(payload.len() as u64)
         .body(body)
         .build();
-    warc_writer.write_record(record)?;
+    warc_writer.write_record(record, None)?;
 
     let payload = b"howdy doody!";
     let body = &payload[..];
@@ -27,7 +27,7 @@ fn main() -> Result<(), std::io::Error> {
         .content_length(payload.len() as u64)
         .body(body)
         .build();
-    warc_writer.write_record(record)?;
+    warc_writer.write_record(record, None)?;
 
     Ok(())
 }
